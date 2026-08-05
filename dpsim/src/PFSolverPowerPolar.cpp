@@ -112,7 +112,7 @@ void PFSolverPowerPolar::generateInitialSolution(Real time,
 
     if (!can_keep) {
       if (auto v = pv->initialSingleVoltage(); std::abs(v) > 1e-6){
-        Real base = mBaseVoltageAtNode[pq]; 
+        Real base = mBaseVoltageAtNode[pv]; 
         sol_V(idx) = std::abs(v) / base; 
         sol_D(idx) = std::arg(v); 
       } else {

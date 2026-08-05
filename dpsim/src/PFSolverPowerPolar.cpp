@@ -67,8 +67,14 @@ void PFSolverPowerPolar::generateInitialSolution(Real time,
     sol_Q(idx) = 0.0;
 
     if (!can_keep) {
-      sol_V(idx) = 1.0;
-      sol_D(idx) = 0.0;
+      if (auto v = pq->initialSingleVoltage(); std::abs(v) > 1e-6){
+        Real base = mBaseVoltageAtNode[pq]; 
+        sol_V(idx) = std::abs(v) / base; 
+        sol_D(idx) = std::arg(v); 
+      } else {
+        sol_V(idx) = 1.0;
+        sol_D(idx) = 0.0;
+      }
     }
 
     for (auto comp : mSystem.mComponentsAtNode[pq]) {
@@ -105,8 +111,14 @@ void PFSolverPowerPolar::generateInitialSolution(Real time,
     sol_Q(idx) = 0.0;
 
     if (!can_keep) {
-      sol_D(idx) = 0.0;
-      sol_V(idx) = 1.0;
+      if (auto v = pq->initialSingleVoltage(); std::abs(v) > 1e-6){
+        Real base = mBaseVoltageAtNode[pq]; 
+        sol_V(idx) = std::abs(v) / base; 
+        sol_D(idx) = std::arg(v); 
+      } else {
+        sol_D(idx) = 0.0;
+        sol_V(idx) = 1.0;
+      }
     }
 
     for (auto comp : mSystem.mComponentsAtNode[pv]) {

@@ -319,10 +319,14 @@ void SP::Ph1::Transformer::pfApplyAdmittanceMatrixStamp(
   mY_element = MatrixComp(2, 2);
   Complex y = Complex(1, 0) / mLeakagePerUnit;
 
+  // create complex per-unit ratio for phase shifting during load-flow
+  Complex ratioPerUnit = std::polar(mRatioAbsPerUnit, mRatioPhase); 
+
+  // use complex per-unit ratio
   mY_element(0, 0) = y;
-  mY_element(0, 1) = -y * mRatioAbsPerUnit;
-  mY_element(1, 0) = -y * mRatioAbsPerUnit;
-  mY_element(1, 1) = y * std::pow(mRatioAbsPerUnit, 2);
+  mY_element(0, 1) = -y * ratioPerUnit;
+  mY_element(1, 0) = -y * std::conj(ratioPerUnit);
+  mY_element(1, 1) = y * std::norm(ratioPerUnit);
 
   //check for inf or nan
   for (int i = 0; i < 2; i++)

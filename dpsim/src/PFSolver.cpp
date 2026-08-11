@@ -600,6 +600,12 @@ Bool PFSolver::runNewtonRaphson() {
     // Calculate the mismatch according to the current solution
     calculateMismatch();
 
+      // TEMP DIAGNOSTIC: print convergence trend regardless of log level
+    std::cout << "iter " << i
+               << "  max|mismatch|=" << mF.cwiseAbs().maxCoeff()
+               << "  norm=" << mF.norm()
+               << std::endl;
+
     SPDLOG_LOGGER_DEBUG(mSLog, "Mismatch vector at iteration {}: \n {}", i, mF);
     mSLog->flush();
 

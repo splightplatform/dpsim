@@ -343,9 +343,10 @@ void PFSolverPowerPolar::updateSolution() {
 
     calculateMismatch(); // re-evaluate mF at this trial point
 
-    if (mF.norm() <= prevMismatchNorm || attempt == maxBacktracks)
-      break; // improved, or out of attempts -> accept whatever we have
-    scale *= 0.5; // didn't improve -> retry the same direction at half the step
+    // require e.g. 1% mismatch reduction to accept, not just "not worse"
+    if (mF.norm() <= 0.99 * prevMismatchNorm || attempt == maxBacktracks)
+      break;
+    scale *= 0.5;
   }
 }
 

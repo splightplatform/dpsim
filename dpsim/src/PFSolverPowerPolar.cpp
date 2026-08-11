@@ -305,34 +305,47 @@ void PFSolverPowerPolar::calculateJacobian() {
 void PFSolverPowerPolar::updateSolution() {
   UInt npqpv = mNumPQBuses + mNumPVBuses;
 
+  // Snapshot current state so we can backtrack if a step doesn't reduce the mismatch.
+  CPS::Vector sol_V_prev = sol_V;
+  CPS::Vector sol_D_prev = sol_D;
+  Real prevMismatchNorm = mF.norm(); // mF was set by calculateMismatch() at this state
+
   // Scale the whole step by one factor to bound the max change without altering direction.
   const double maxDVpu = 0.1;      // max |dV| per step [pu]
   const double maxDThetaRad = 0.2; // max |dTheta| per step [rad]
 
   // mX: [0,npqpv) angle incr (PQ+PV), then rel. voltage dV/V (PQ only).
-  double scale = 1.0;
+  double baseScale = 1.0;
   for (UInt a = 0; a < npqpv; ++a) {
     double dTheta = std::abs(mX.coeff(a));
     if (dTheta > maxDThetaRad)
-      scale = std::min(scale, maxDThetaRad / dTheta);
+      baseScale = std::min(baseScale, maxDThetaRad / dTheta);
   }
   for (UInt b = 0; b < mNumPQBuses; ++b) {
     double dVrel = std::abs(mX.coeff(npqpv + b));
     if (dVrel > maxDVpu)
-      scale = std::min(scale, maxDVpu / dVrel);
+      baseScale = std::min(baseScale, maxDVpu / dVrel);
   }
 
-  for (UInt a = 0; a < npqpv; ++a) {
-    UInt k = mPQPVBusIndices[a];
-    sol_D(k) += scale * mX.coeff(a);
-    // additive-relative update, consistent with the Jacobian
-    if (a < mNumPQBuses)
-      sol_V(k) *= (1.0 + scale * mX.coeff(a + npqpv));
-  }
+  double scale = baseScale;
+  const int maxBacktracks = 6;
+  for (int attempt = 0; attempt <= maxBacktracks; ++attempt) {
+    for (UInt a = 0; a < npqpv; ++a) {
+      UInt k = mPQPVBusIndices[a];
+      sol_D(k) = sol_D_prev(k) + scale * mX.coeff(a);
+      if (a < mNumPQBuses)
+        sol_V(k) = sol_V_prev(k) * (1.0 + scale * mX.coeff(a + npqpv));
+    }
+    for (auto node : mSystem.mNodes) {
+      UInt idx = node->matrixNodeIndex();
+      sol_V_complex(idx) = Math::polar(sol_V(idx), sol_D(idx));
+    }
 
-  for (auto node : mSystem.mNodes) {
-    UInt idx = node->matrixNodeIndex();
-    sol_V_complex(idx) = Math::polar(sol_V(idx), sol_D(idx));
+    calculateMismatch(); // re-evaluate mF at this trial point
+
+    if (mF.norm() <= prevMismatchNorm || attempt == maxBacktracks)
+      break; // improved, or out of attempts -> accept whatever we have
+    scale *= 0.5; // didn't improve -> retry the same direction at half the step
   }
 }
 

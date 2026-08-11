@@ -83,7 +83,7 @@ protected:
   /// Solver tolerance
   Real mTolerance = 1e-8;
   /// Maximum number of iterations
-  CPS::UInt mMaxIterations = 20;
+  CPS::UInt mMaxIterations = 100;
   /// Actual number of iterations
   CPS::UInt mIterations;
   /// Enforce generator reactive-power limits via PV<->PQ outer-loop switching

@@ -688,7 +688,9 @@ Bool PFSolver::resolveRemoteRegulation(){
     if (!anyAdjusted) return true;
     if (!runNewtonRaphson()) return false;
   }
-  ...
+  SPDLOG_LOGGER_WARN(mSLog, "Remote regulation did not settle within {} outer iterations",
+                    mMaxRemoteRegIterations);
+  return false;
 }
 
 void PFSolver::SolveTask::execute(Real time, Int timeStepCount) {

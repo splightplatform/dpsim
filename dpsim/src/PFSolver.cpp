@@ -83,14 +83,12 @@ void PFSolver::setUpJacobianStorage() {
 }
 
 void PFSolver::solveJacobianSystem() {
-  Eigen::SparseMatrix<double> sparseJ = mJ.sparseView();
+  CPS::Matrix JtJ = mJ.transpose() * mJ;
+  for (int k = 0; k < JtJ.rows(); k++)
+    JtJ(k, k) += mLmLambda;
 
-  // Levenberg-Marquardt regularization (useful after Q-max limit reached)
-  for (int k = 0; k < mJ.rows(); k++)
-    sparseJ.coeffRef(k,k) += mLmLambda; 
-
-  Eigen::SparseLU<SparseMatrix> lu(sparseJ);
-  mX = lu.solve(mF);
+  CPS::Vector JtF = mJ.transpose() * mF;
+  mX = JtJ.ldlt().solve(JtF);
 }
 
 void PFSolver::assignMatrixNodeIndices() {

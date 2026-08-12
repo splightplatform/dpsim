@@ -83,8 +83,8 @@ void PFSolver::setUpJacobianStorage() {
 }
 
 void PFSolver::solveJacobianSystem() {
-  auto sparseJ = mJ.sparseView();
-  
+  Eigen::SparseMatrix<double> sparseJ = mJ.sparseView();
+
   // Levenberg-Marquardt regularization (useful after Q-max limit reached)
   const double lambda = 1e-6; // start small
   for (int k = 0; k < mJ.rows(); k++)

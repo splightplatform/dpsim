@@ -364,6 +364,17 @@ void PFSolverPowerPolar::updateSolution() {
   } else {
     mLmLambda = std::min(mLmLambda * 4.0, 1e4);    // had to backtrack -> the raw step is untrustworthy, damp harder
   }
+  if (attemptsUsed >= maxBacktracks) {
+    ++mStagnantIterations;
+  } else {
+    mStagnantIterations = 0;
+  }
+
+  if (mStagnantIterations >= 5) {
+    mLmLambda = 1e-2;
+    mStagnantIterations = 0;
+    SPDLOG_LOGGER_WARN(mSLog, "LM stagnated at local minimum; forcing escape step");
+  }
   double rawStepNorm = mX.norm();
   std::cout << "  rawStepNorm=" << rawStepNorm
             << "  baseScale(clamp)=" << baseScale

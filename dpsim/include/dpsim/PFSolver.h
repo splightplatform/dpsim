@@ -30,8 +30,10 @@ protected:
 
   //improving Newton Raphson Solver
   Real mLmLambda = 1e-3; 
+  UInt mStagnantIterations = 0; 
 
-  /// Drive local PV setpoints so remote-regulated buses reach their target voltage.
+  //Removte voltage regulation work
+  /// Drive local PV setpoints so remote-regulated buses reach their target voltage
   Bool resolveRemoteRegulation();
   /// Current solved |V| at a bus, in the solver's own representation.
   virtual CPS::Real busVoltageMagnitude(CPS::UInt busIdx) = 0;

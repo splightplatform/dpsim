@@ -62,6 +62,8 @@ void PFSolver::initialize() {
   for (auto gen: mSynchronGenerators){
     UInt g = gen->node(0)->matrixNodeIndex(); 
     auto rn = gen->regulatedNode(); 
+    SPDLOG_LOGGER_INFO(mSLog, "Gen at bus idx {}: regulatedNode = {}",
+                    g, rn ? std::to_string(rn->matrixNodeIndex()) : "null");
     if (rn && rn->matrixNodeIndex() != g) {
       UInt r = rn->matrixNodeIndex(); 
       mRegulatedBusOfGen[g] = r; 

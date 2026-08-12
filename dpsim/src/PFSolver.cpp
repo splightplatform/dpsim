@@ -677,13 +677,15 @@ Bool PFSolver::resolveRemoteRegulation(){
   for (UInt outer = 0; outer < mMaxRemoteRegIterations; ++outer){
     Bool anyAdjusted = false;
     for (auto &[genIdx, regIdx] : mRegulatedBusOfGen){
+      if (isQLimitPinned(genIdx))   // don't manipulate Qlimited gens
+        continue;
       Real target = mRegulatedVSetPU[genIdx];
       Real actual = busVoltageMagnitude(regIdx);
       Real error = target - actual;
       if (std::abs(error) < mRemoteRegTolerance) continue;
       anyAdjusted = true;
       mLocalVSetOverride[genIdx] += error;
-      setBusVoltageMagnitude(genIdx, mLocalVSetOverride[genIdx]); 
+      setBusVoltageMagnitude(genIdx, mLocalVSetOverride[genIdx]);
     }
     if (!anyAdjusted) return true;
     if (!runNewtonRaphson()) return false;

@@ -36,6 +36,7 @@ protected:
   /// Current solved |V| at a bus, in the solver's own representation.
   virtual CPS::Real busVoltageMagnitude(CPS::UInt busIdx) = 0;
   virtual void setBusVoltageMagnitude(CPS::UInt busIdx, CPS::Real value) = 0;
+  virtual CPS::Bool isQLimitPinned(CPS::UInt busIdx) { return false; }  // base: no Q-limit concept
 
   /// Number of PQ nodes
   UInt mNumPQBuses = 0;

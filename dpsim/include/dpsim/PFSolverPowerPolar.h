@@ -40,6 +40,12 @@ protected:
   //remote bus regulation 
   CPS::Real busVoltageMagnitude(CPS::UInt busIdx) override { return sol_V(busIdx); }
   void setBusVoltageMagnitude(CPS::UInt busIdx, CPS::Real value) override { sol_V(busIdx) = value; }
+  CPS::Bool isQLimitPinned(CPS::UInt busIdx) override {
+    for (auto &node : mSystem.mNodes)
+      if (node->matrixNodeIndex() == busIdx)
+        return mQLimitConvertedAtMax.count(node) > 0;
+    return false;
+  }
 
   // Core methods
   /// Generate initial solution for current time step

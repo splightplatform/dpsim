@@ -353,7 +353,12 @@ void PFSolverPowerPolar::updateSolution() {
       break;
     scale *= 0.5;
   }
-  std::cout << "  rawStepNorm=" << rawStepNorm << "  scale=" << scale << std::endl;
+  double rawStepNorm = mX.norm();
+  std::cout << "  rawStepNorm=" << rawStepNorm
+          << "  baseScale(clamp)=" << baseScale
+          << "  finalScale=" << scale
+          << "  backtracks=" << attemptsUsed
+          << std::endl;
 }
 
 void PFSolverPowerPolar::setSolution() {

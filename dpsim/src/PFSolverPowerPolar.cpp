@@ -313,16 +313,13 @@ void PFSolverPowerPolar::calculateJacobian() {
 void PFSolverPowerPolar::updateSolution() {
   UInt npqpv = mNumPQBuses + mNumPVBuses;
 
-  // Snapshot current state so we can backtrack if a step doesn't reduce the mismatch.
   CPS::Vector sol_V_prev = sol_V;
   CPS::Vector sol_D_prev = sol_D;
-  Real prevMismatchNorm = mF.norm(); // mF was set by calculateMismatch() at this state
+  Real prevMismatchNorm = mF.norm();
 
-  // Scale the whole step by one factor to bound the max change without altering direction.
-  const double maxDVpu = 0.1;      // max |dV| per step [pu]
-  const double maxDThetaRad = 0.2; // max |dTheta| per step [rad]
+  const double maxDVpu = 0.1;
+  const double maxDThetaRad = 0.2;
 
-  // mX: [0,npqpv) angle incr (PQ+PV), then rel. voltage dV/V (PQ only).
   double baseScale = 1.0;
   for (UInt a = 0; a < npqpv; ++a) {
     double dTheta = std::abs(mX.coeff(a));
@@ -339,7 +336,7 @@ void PFSolverPowerPolar::updateSolution() {
   const int maxBacktracks = 6;
   int attemptsUsed = 0;
   for (int attempt = 0; attempt <= maxBacktracks; ++attempt) {
-    attemptsUsed = attempt; 
+    attemptsUsed = attempt;
     for (UInt a = 0; a < npqpv; ++a) {
       UInt k = mPQPVBusIndices[a];
       sol_D(k) = sol_D_prev(k) + scale * mX.coeff(a);
@@ -351,30 +348,44 @@ void PFSolverPowerPolar::updateSolution() {
       sol_V_complex(idx) = Math::polar(sol_V(idx), sol_D(idx));
     }
 
-    calculateMismatch(); // re-evaluate mF at this trial point
+    calculateMismatch();
 
-    // require e.g. 1% mismatch reduction to accept, not just "not worse"
     if (mF.norm() <= 0.99 * prevMismatchNorm || attempt == maxBacktracks)
       break;
     scale *= 0.5;
   }
-  // after the backtracking loop settles:
+
   if (attemptsUsed == 0) {
-    mLmLambda = std::max(mLmLambda * 0.5, 1e-6);   // step was accepted immediately -> relax damping
+    mLmLambda = std::max(mLmLambda * 0.5, 1e-6);
   } else {
-    mLmLambda = std::min(mLmLambda * 4.0, 1e4);    // had to backtrack -> the raw step is untrustworthy, damp harder
+    mLmLambda = std::min(mLmLambda * 4.0, 1e4);
   }
+
   if (attemptsUsed >= maxBacktracks) {
     ++mStagnantIterations;
   } else {
     mStagnantIterations = 0;
   }
 
+  //perturb if stuck (heuristic)
   if (mStagnantIterations >= 5) {
     mLmLambda = 1e-2;
     mStagnantIterations = 0;
-    SPDLOG_LOGGER_WARN(mSLog, "LM stagnated at local minimum; forcing escape step");
+    SPDLOG_LOGGER_WARN(mSLog, "LM stagnated at local minimum; perturbing state to escape");
+
+    for (UInt a = 0; a < npqpv; ++a) {
+      UInt k = mPQPVBusIndices[a];
+      sol_D(k) += 0.01 * (2.0 * ((double)rand() / RAND_MAX) - 1.0);
+      if (a < mNumPQBuses)
+        sol_V(k) *= (1.0 + 0.01 * (2.0 * ((double)rand() / RAND_MAX) - 1.0));
+    }
+    for (auto node : mSystem.mNodes) {
+      UInt idx = node->matrixNodeIndex();
+      sol_V_complex(idx) = Math::polar(sol_V(idx), sol_D(idx));
+    }
+    calculateMismatch();
   }
+
   double rawStepNorm = mX.norm();
   std::cout << "  rawStepNorm=" << rawStepNorm
             << "  baseScale(clamp)=" << baseScale

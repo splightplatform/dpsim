@@ -43,6 +43,9 @@ void PFSolverPowerPolar::generateInitialSolution(Real time,
     sol_D = mLastConvergedD;
   }
 
+  if (!can_keep)
+    mLmLambda = 1e-3;
+
   // update components
   for (auto comp : mSystem.mComponents) {
     if (auto load = std::dynamic_pointer_cast<CPS::SP::Ph1::Load>(comp)) {
@@ -355,12 +358,19 @@ void PFSolverPowerPolar::updateSolution() {
       break;
     scale *= 0.5;
   }
+  // after the backtracking loop settles:
+  if (attemptsUsed == 0) {
+    mLmLambda = std::max(mLmLambda * 0.5, 1e-6);   // step was accepted immediately -> relax damping
+  } else {
+    mLmLambda = std::min(mLmLambda * 4.0, 1e4);    // had to backtrack -> the raw step is untrustworthy, damp harder
+  }
   double rawStepNorm = mX.norm();
   std::cout << "  rawStepNorm=" << rawStepNorm
-          << "  baseScale(clamp)=" << baseScale
-          << "  finalScale=" << scale
-          << "  backtracks=" << attemptsUsed
-          << std::endl;
+            << "  baseScale(clamp)=" << baseScale
+            << "  finalScale=" << scale
+            << "  backtracks=" << attemptsUsed
+            << "  mLmLambda(next)=" << mLmLambda
+            << std::endl;
 }
 
 void PFSolverPowerPolar::setSolution() {

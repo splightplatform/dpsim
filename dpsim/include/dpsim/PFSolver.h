@@ -28,6 +28,9 @@ protected:
   CPS::Real mRemoteRegTolerance = 1e-6;
   CPS::UInt mMaxRemoteRegIterations = 30;
 
+  //improving Newton Raphson Solver
+  Real mLmLambda = 1e-3; 
+
   /// Drive local PV setpoints so remote-regulated buses reach their target voltage.
   Bool resolveRemoteRegulation();
   /// Current solved |V| at a bus, in the solver's own representation.

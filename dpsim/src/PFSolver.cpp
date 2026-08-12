@@ -254,6 +254,11 @@ void PFSolver::determinePFBusType() {
           mSLog, "{}: VD, PV and PQ type component connect -> set as VD bus",
           node->name());
       mVDBuses.push_back(node);
+    } else if (!connectedPV && connectedPQ && connectedVD){
+      SPDLOG_LOGGER_INFO(
+        mSLog, "{}: VD and PQ type component connected -> set as VD bus",
+        node->name());
+      mVDBuses.push_back(node);
     } else {
       std::stringstream ss;
       ss << "Node>>" << node->name()

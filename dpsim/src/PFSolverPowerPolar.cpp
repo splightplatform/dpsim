@@ -125,7 +125,12 @@ void PFSolverPowerPolar::generateInitialSolution(Real time,
       if (auto gen = std::dynamic_pointer_cast<CPS::SP::Ph1::SynchronGenerator>(
               comp)) {
         sol_P(idx) += gen->attributeTyped<CPS::Real>("P_set_pu")->get();
-        sol_V(idx) = gen->attributeTyped<CPS::Real>("V_set_pu")->get();
+        auto it = mLocalVSetOverride.find(idx);
+        sol_V(idx) = (it != mLocalVSetOverride.end())
+                      ? it->second
+                      : gen->attributeTyped<CPS::Real>("V_set_pu")->get();
+        // sol_P(idx) += gen->attributeTyped<CPS::Real>("P_set_pu")->get();
+        // sol_V(idx) = gen->attributeTyped<CPS::Real>("V_set_pu")->get();
       } else if (auto load =
                      std::dynamic_pointer_cast<CPS::SP::Ph1::Load>(comp)) {
         sol_P(idx) -= load->attributeTyped<CPS::Real>("P_pu")->get();

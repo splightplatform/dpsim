@@ -37,6 +37,9 @@ protected:
   CPS::Vector mLastConvergedD;
   bool mHasLastConvergedSolution = false;
 
+  //remote bus regulation 
+  CPS::Real busVoltageMagnitude(CPS::UInt busIdx) override { return sol_V(busIdx); }
+  
   // Core methods
   /// Generate initial solution for current time step
   void generateInitialSolution(Real time,

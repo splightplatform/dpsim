@@ -49,6 +49,9 @@ public:
   /// Minimum reactive power limit [pu]
   const Attribute<Real>::Ptr mReactivePowerMinPerUnit;
 
+  //remote bus regulation
+  CPS::TopologicalNode::Ptr mRegulatedNode;
+
   /// Defines UID, name and logging level
   SynchronGenerator(String uid, String name,
                     Logger::Level logLevel = Logger::Level::off);
@@ -78,6 +81,11 @@ public:
   void updatePowerInjection(Complex powerInj);
   /// Get Apparent power of Powerflow solution
   Complex getApparentPower() const;
+  
+  //remote bus regulation
+  void setRegulatedNode(CPS::TopologicalNode::Ptr n) { mRegulatedNode = n; }
+  CPS::TopologicalNode::Ptr regulatedNode() const { return mRegulatedNode; }
+  
 };
 } // namespace Ph1
 } // namespace SP

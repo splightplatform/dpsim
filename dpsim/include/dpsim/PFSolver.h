@@ -10,6 +10,7 @@
 
 #include <cmath>
 #include <iterator>
+#include <map>
 
 #include "dpsim-models/Components.h"
 #include "dpsim-models/SystemTopology.h"
@@ -20,6 +21,18 @@ namespace DPsim {
 /// Solver class using the nonlinear powerflow (PF) formulation.
 class PFSolver : public Solver {
 protected:
+  // Remote regulation
+  std::map<CPS::UInt, CPS::UInt> mRegulatedBusOfGen;   // genBusIdx -> targetBusIdx (only entries where they differ)
+  std::map<CPS::UInt, CPS::Real> mLocalVSetOverride;   // genBusIdx -> current local V_set_pu being tuned
+  std::map<CPS::UInt, CPS::Real> mRegulatedVSetPU;     // genBusIdx -> target pu at the remote bus 
+  CPS::Real mRemoteRegTolerance = 1e-6;
+  CPS::UInt mMaxRemoteRegIterations = 30;
+
+  /// Drive local PV setpoints so remote-regulated buses reach their target voltage.
+  Bool resolveRemoteRegulation();
+  /// Current solved |V| at a bus, in the solver's own representation.
+  virtual CPS::Real busVoltageMagnitude(CPS::UInt busIdx) = 0;
+
   /// Number of PQ nodes
   UInt mNumPQBuses = 0;
   /// Number of PV nodes

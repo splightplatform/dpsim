@@ -84,6 +84,12 @@ void PFSolver::setUpJacobianStorage() {
 
 void PFSolver::solveJacobianSystem() {
   auto sparseJ = mJ.sparseView();
+  
+  // Levenberg-Marquardt regularization (useful after Q-max limit reached)
+  const double lambda = 1e-6; // start small
+  for (int k = 0; k < mJ.rows(); k++)
+    sparseJ.coeffRef(k,k) += lambda; 
+
   Eigen::SparseLU<SparseMatrix> lu(sparseJ);
   mX = lu.solve(mF);
 }
@@ -657,6 +663,10 @@ Bool PFSolver::solvePowerflow() {
       isConverged = false;
       converged = false;
     }
+
+    if (converged && !mRegulatedBusOfGen.empty())
+      SPDLOG_LOGGER_WARN(mSLog, "Skipping remote-bus regulation: base solve (with Q-limits) did not converge");
+
   }
 
   if (converged && !mRegulatedBusOfGen.empty())

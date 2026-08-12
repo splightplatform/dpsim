@@ -334,7 +334,9 @@ void PFSolverPowerPolar::updateSolution() {
 
   double scale = baseScale;
   const int maxBacktracks = 6;
+  int attemptsUsed = 0;
   for (int attempt = 0; attempt <= maxBacktracks; ++attempt) {
+    attemptsUsed = attempt; 
     for (UInt a = 0; a < npqpv; ++a) {
       UInt k = mPQPVBusIndices[a];
       sol_D(k) = sol_D_prev(k) + scale * mX.coeff(a);

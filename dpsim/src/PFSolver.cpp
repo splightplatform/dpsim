@@ -693,7 +693,6 @@ Bool PFSolver::resolveRemoteRegulation(){
   return false;
 }
 
-
 void PFSolver::SolveTask::execute(Real time, Int timeStepCount) {
   // apply keepLastSolution to save computation time
   mSolver.generateInitialSolution(time, mSolver.mKeepLastSolution);

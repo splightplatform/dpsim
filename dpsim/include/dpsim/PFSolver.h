@@ -35,6 +35,7 @@ protected:
   Bool resolveRemoteRegulation();
   /// Current solved |V| at a bus, in the solver's own representation.
   virtual CPS::Real busVoltageMagnitude(CPS::UInt busIdx) = 0;
+  virtual void setBusVoltageMagnitude(CPS::UInt busIdx, CPS::Real value) = 0;
 
   /// Number of PQ nodes
   UInt mNumPQBuses = 0;

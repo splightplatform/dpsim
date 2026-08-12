@@ -39,7 +39,8 @@ protected:
 
   //remote bus regulation 
   CPS::Real busVoltageMagnitude(CPS::UInt busIdx) override { return sol_V(busIdx); }
-  
+  void setBusVoltageMagnitude(CPS::UInt busIdx, CPS::Real value) override { sol_V(busIdx) = value; }
+
   // Core methods
   /// Generate initial solution for current time step
   void generateInitialSolution(Real time,

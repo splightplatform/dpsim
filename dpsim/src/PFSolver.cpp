@@ -675,20 +675,20 @@ Bool PFSolver::solvePowerflow() {
 
 Bool PFSolver::resolveRemoteRegulation(){
   for (UInt outer = 0; outer < mMaxRemoteRegIterations; ++outer){
-    Bool anyAdjusted = false; 
+    Bool anyAdjusted = false;
     for (auto &[genIdx, regIdx] : mRegulatedBusOfGen){
-      Real target = mRegulatedVSetPU[genIdx]; 
-      Real actual = busVoltageMagnitude(regIdx); 
-      Real error = target - actual; 
+      Real target = mRegulatedVSetPU[genIdx];
+      Real actual = busVoltageMagnitude(regIdx);
+      Real error = target - actual;
       if (std::abs(error) < mRemoteRegTolerance) continue;
-      anyAdjusted = true; 
-      mLocalVSetOverride[genIdx] += error; 
+      anyAdjusted = true;
+      mLocalVSetOverride[genIdx] += error;
+      setBusVoltageMagnitude(genIdx, mLocalVSetOverride[genIdx]); 
     }
-    if (!anyAdjusted) return true; 
-    if (!runNewtonRaphson()) return false; 
+    if (!anyAdjusted) return true;
+    if (!runNewtonRaphson()) return false;
   }
-  SPDLOG_LOGGER_WARN(mSLog, "Remote regulation did not settle within {} outer iterations", mMaxRemoteRegIterations);
-  return false;
+  ...
 }
 
 void PFSolver::SolveTask::execute(Real time, Int timeStepCount) {

@@ -715,7 +715,6 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
     // continuation sub-steps below solve against the right unknown set.
     reclassifyBuses();
 
-
     CPS::Vector sol_V_prePin = sol_V;
     CPS::Vector sol_D_prePin = sol_D;
 
@@ -883,10 +882,45 @@ Bool PFSolverPowerPolar::solveWithLoadHomotopy(const CPS::String &label) {
             "Homotopy: stalled at lambda={:.4f} (step below {:.1e}); "
             "load level appears to be a limit point",
             lambda, kMinStep);
-        restoreFullLoad();
-        return false;
+        // restoreFullLoad();
+        // return false;
+        break; 
       }
     }
+  }
+  // --- Phase 2b: nose reached below full load. Try to cross to the lower
+  // branch by overshooting, then re-solving at full load from the far side.
+  if (lambda < 1.0 - 1e-12) {
+    SPDLOG_LOGGER_INFO(mSLog,
+        "Homotopy: nose at lambda={:.4f}; attempting lower-branch crossing", lambda);
+
+    CPS::Vector Vnose = sol_V;
+    CPS::Vector Dnose = sol_D;
+
+    for (CPS::Real over : {1.05, 1.10, 1.20}) {
+      sol_V = Vnose;
+      sol_D = Dnose;
+      applyLambda(over);
+      refreshComplex();
+      runNewtonRaphson(fmt::format("{} overshoot lambda={:.2f}", label, over));
+      // Deliberately ignore the result: we want the diverged iterate, which
+      // usually sits past the fold on the lower branch.
+
+      restoreFullLoad();
+      refreshComplex();
+      if (runNewtonRaphson(fmt::format("{} lower-branch from overshoot {:.2f}",
+                                       label, over))) {
+        SPDLOG_LOGGER_INFO(mSLog,
+            "Homotopy: reached a full-load solution via overshoot {:.2f}", over);
+        return true;
+      }
+    }
+
+    sol_V = Vnose;
+    sol_D = Dnose;
+    refreshComplex();
+    restoreFullLoad();
+    return false;
   }
 
   // --- Phase 3: land exactly on full load.

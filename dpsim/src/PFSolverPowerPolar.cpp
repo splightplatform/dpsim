@@ -613,6 +613,9 @@ CPS::Real PFSolverPowerPolar::generatorReactivePowerPerUnit(
 }
 
 CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
+  static int callCount = 0;
+  SPDLOG_LOGGER_INFO(mSLog, "=== enforceReactiveLimits() call #{} ===", ++callCount);
+  
   //temp
   static const std::map<CPS::String, std::pair<CPS::Real, CPS::Real>> pssePu = {
     // name                V_pu (kv/nominal_kv)      D_rad (deg * M_PI/180.0)
@@ -705,6 +708,14 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
       toPV.push_back(node);
   }
 
+  SPDLOG_LOGGER_INFO(mSLog, "enforceReactiveLimits: toPQ.size()={} toPV.size()={}",
+                     toPQ.size(), toPV.size());
+  for (auto &c : toPQ)
+    SPDLOG_LOGGER_INFO(mSLog, "  toPQ: bus {} pinning at {}",
+                       std::get<0>(c)->name(), std::get<1>(c) ? "Qmax" : "Qmin");
+  for (auto &n : toPV)
+    SPDLOG_LOGGER_INFO(mSLog, "  toPV: bus {} relaxing back to PV", n->name());
+
   // Apply PV -> PQ switches (pin reactive injection at the limit via continuation).
   for (auto &c : toPQ) {
     auto node = std::get<0>(c);
@@ -780,14 +791,18 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
     continue;
   }
 
-  // Apply PQ -> PV switches (restore voltage control).
+    // Apply PQ -> PV switches (restore voltage control).
   for (auto &node : toPV) {
     mPQBuses.erase(std::remove(mPQBuses.begin(), mPQBuses.end(), node),
                    mPQBuses.end());
     mPVBuses.push_back(node);
     CPS::Real qMaxPU, qMinPU, vSetPU;
     busLimits(node, qMaxPU, qMinPU, vSetPU);
+    CPS::Real vBefore = sol_V(node->matrixNodeIndex());  
     sol_V(node->matrixNodeIndex()) = vSetPU;
+    SPDLOG_LOGGER_WARN(mSLog,                           
+        "Q-limit: PQ bus {} -> PV, voltage snapped {:.6f} -> {:.6f} ({:+.2f}%)",
+        node->name(), vBefore, vSetPU, (vSetPU - vBefore) / vBefore * 100.0);
     mQLimitConvertedAtMax.erase(node);
     ++mQLimitSwitchCount[node];
     SPDLOG_LOGGER_INFO(mSLog, "Q-limit: PQ bus {} -> PV (constraint relaxed)",

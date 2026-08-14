@@ -836,8 +836,13 @@ Bool PFSolverPowerPolar::solveWithLoadHomotopy(const CPS::String &label) {
   for (int t = 0; t < 8; ++t) {
     applyLambda(lambda);
     SPDLOG_LOGGER_INFO(mSLog, "Homotopy: seeking start at lambda={:.4f}", lambda);
-    if (runNewtonRaphson(fmt::format("{} homotopy start lambda={:.4f}",
-                                     label, lambda))) {
+
+    bool stepOk = runNewtonRaphson(fmt::format("{} homotopy lambda={:.4f}",
+                                              label, trial));
+    if (stepOk && !mRegulatedBusOfGen.empty())
+      stepOk = resolveRemoteRegulation();
+
+    if (stepOk) {
       started = true;
       break;
     }
@@ -864,9 +869,13 @@ Bool PFSolverPowerPolar::solveWithLoadHomotopy(const CPS::String &label) {
     SPDLOG_LOGGER_INFO(mSLog,
         "Homotopy: step {} lambda {:.4f} -> {:.4f} (dlambda={:.4f})",
         taken + 1, lambda, trial, step);
+    
+    bool stepOk = runNewtonRaphson(fmt::format("{} homotopy lambda={:.4f}", label, trial));
+    
+    if (stepOk && !mRegulatedBusOfGen.empty())
+      stepOk = resolveRemoteRegulation();
 
-    if (runNewtonRaphson(fmt::format("{} homotopy lambda={:.4f}",
-                                    label, trial))) {
+    if (stepOk) {
       lambda = trial;
       ++taken;
       step *= 1.5;                      // grow cautiously after success
@@ -878,7 +887,7 @@ Bool PFSolverPowerPolar::solveWithLoadHomotopy(const CPS::String &label) {
           "CATDOG-3008={:.5f}  CATDOG_G-3018={:.5f}",
           lambda, sol_V(10), sol_V(19), sol_V(18), sol_V(23),
           sol_V(6), sol_V(1));
-          
+
     } else {
       sol_V = Vsave;                    // roll back to the last good point
       sol_D = Dsave;
@@ -934,7 +943,10 @@ Bool PFSolverPowerPolar::solveWithLoadHomotopy(const CPS::String &label) {
 
   // --- Phase 3: land exactly on full load.
   restoreFullLoad();
-  return runNewtonRaphson(fmt::format("{} homotopy final", label));
+  bool finalOk = runNewtonRaphson(fmt::format("{} homotopy final", label));
+  if (finalOk && !mRegulatedBusOfGen.empty())
+    finalOk = resolveRemoteRegulation();
+  return finalOk;
 }
 
 void PFSolverPowerPolar::clearReactiveLimitState() {

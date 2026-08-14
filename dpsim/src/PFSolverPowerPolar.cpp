@@ -714,7 +714,7 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
 
     // Capture Q while still voltage-controlled, before switching bus type --
     // this is the continuation ramp's starting point.
-    CPS::Real qStart = generatorReactivePowerPerUnit(node);
+    // CPS::Real qStart = generatorReactivePowerPerUnit(node);
 
     mPVBuses.erase(std::remove(mPVBuses.begin(), mPVBuses.end(), node),
                   mPVBuses.end());

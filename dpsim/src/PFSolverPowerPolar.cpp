@@ -870,6 +870,15 @@ Bool PFSolverPowerPolar::solveWithLoadHomotopy(const CPS::String &label) {
       lambda = trial;
       ++taken;
       step *= 1.5;                      // grow cautiously after success
+
+       // Are the remote-regulated buses being held where they should be?
+      SPDLOG_LOGGER_INFO(mSLog,
+          "Homotopy state @ lambda={:.4f}: SUB230-205={:.5f} (want 0.98000)  "
+          "HYDRO-201={:.5f} (want 1.04000)  URBGEN-206={:.5f}  HYDRO_G-211={:.5f}  "
+          "CATDOG-3008={:.5f}  CATDOG_G-3018={:.5f}",
+          lambda, sol_V(10), sol_V(19), sol_V(18), sol_V(23),
+          sol_V(6), sol_V(1));
+          
     } else {
       sol_V = Vsave;                    // roll back to the last good point
       sol_D = Dsave;

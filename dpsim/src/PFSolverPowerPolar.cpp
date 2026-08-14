@@ -616,35 +616,6 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
   static int callCount = 0;
   SPDLOG_LOGGER_INFO(mSLog, "=== enforceReactiveLimits() call #{} ===", ++callCount);
 
-  //temp
-  static const std::map<CPS::String, std::pair<CPS::Real, CPS::Real>> pssePu = {
-    // name                V_pu (kv/nominal_kv)      D_rad (deg * M_PI/180.0)
-    {"NUC-A-101",      { 22.032    / 21.6,   18.7888 * M_PI / 180.0 }},
-    {"NUC-B-102",      { 22.032    / 21.6,   18.7888 * M_PI / 180.0 }},
-    {"NUCPANT-151",    { 500.36    / 500.0,  13.0817 * M_PI / 180.0 }},
-    {"MID500-152",     { 476.73    / 500.0,  -0.1807 * M_PI / 180.0 }},
-    {"MID230-153",     { 224.2017  / 230.0,  -2.5545 * M_PI / 180.0 }},
-    {"DOWNTN-154",     { 225.3747  / 230.0,  -3.9485 * M_PI / 180.0 }},
-    {"HYDRO-201",      { 520.0     / 500.0,   8.5477 * M_PI / 180.0 }},
-    {"EAST500-202",    { 480.675   / 500.0,   0.0805 * M_PI / 180.0 }},
-    {"EAST230-203",    { 210.9951  / 230.0,  -5.7505 * M_PI / 180.0 }},
-    {"SUB500-204",     { 487.015   / 500.0,   0.2386 * M_PI / 180.0 }},
-    {"SUB230-205",     { 225.4     / 230.0,  -4.0489 * M_PI / 180.0 }},
-    {"URBGEN-206",     { 18.91386  / 18.0,    1.8105 * M_PI / 180.0 }},
-    {"HYDRO_G-211",    { 21.9578   / 20.0,   14.8489 * M_PI / 180.0 }},
-    {"MINE-3001",      { 232.3368  / 230.0,  -1.6207 * M_PI / 180.0 }},
-    {"E. MINE-3002",   { 499.625   / 500.0,  -2.1239 * M_PI / 180.0 }},
-    {"S. MINE-3003",   { 228.3992  / 230.0,  -2.7285 * M_PI / 180.0 }},
-    {"WEST-3004",      { 477.555   / 500.0,  -3.8134 * M_PI / 180.0 }},
-    {"WEST-3005",      { 213.4469  / 230.0,  -6.3916 * M_PI / 180.0 }},
-    {"UPTOWN-3006",    { 221.2301  / 230.0,  -3.6311 * M_PI / 180.0 }},
-    {"RURAL-3007",     { 198.5038  / 230.0, -11.6993 * M_PI / 180.0 }},
-    {"CATDOG-3008",    { 190.9023  / 230.0, -13.7959 * M_PI / 180.0 }},
-    {"B_MINE_G-3011",  { 14.352    / 13.8,    0.0     * M_PI / 180.0 }},
-    {"CATDOG_G-3018",  { 12.42552  / 13.8,   -7.2782 * M_PI / 180.0 }},
-    {"DOWNTN-3019",    { 176.0558  / 230.0, -17.8108 * M_PI / 180.0 }},
-  };
-
   // Returns false if the bus has no generator or no finite Q limit.
   auto busLimits = [&](CPS::TopologicalNode::Ptr node, CPS::Real &qMaxPU,
                        CPS::Real &qMinPU, CPS::Real &vSetPU) -> bool {
@@ -743,19 +714,6 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
     // continuation sub-steps below solve against the right unknown set.
     reclassifyBuses();
 
-    // --- TEMPORARY DIAGNOSTIC: is PSS/E's true solution a fixed point here? ---
-    for (auto testNode : mSystem.mNodes) {
-      UInt testIdx = testNode->matrixNodeIndex();
-      auto it = pssePu.find(testNode->name());   // your lookup from step 1
-      if (it != pssePu.end()) {
-        sol_V(testIdx) = it->second.first;   // V_pu
-        sol_D(testIdx) = it->second.second;  // D_rad
-      }
-    }
-    for (auto n : mSystem.mNodes) {
-      UInt i = n->matrixNodeIndex();
-      sol_V_complex(i) = Math::polar(sol_V(i), sol_D(i));
-    }
 
     // Ramp Q from its pre-pin value to the limit in fixed sub-steps, re-solving
     // after each -- so no single NR call has to cross the whole discontinuity
@@ -786,8 +744,6 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
     sol_Q(idx) = Qesp(idx);
     
     calculateMismatch();
-    std::cout << "DIAGNOSTIC: mF.norm() at PSS/E's true solution = " << mF.norm() << std::endl;
-    std::cout << "DIAGNOSTIC: mF.cwiseAbs().maxCoeff() = " << mF.cwiseAbs().maxCoeff() << std::endl;
   }
 
     // Apply PQ -> PV switches (restore voltage control).

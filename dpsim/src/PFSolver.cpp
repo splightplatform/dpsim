@@ -698,22 +698,22 @@ Bool PFSolver::resolveRemoteRegulation(){
 
       anyAdjusted = true;
 
-      Real vStart = mLocalVSetOverride[genIdx];
-      Real vTargetLocal = vStart + error;  // fully-corrected local override
+      Real vStart = busVoltageMagnitude(genIdx);
+      Real vTargetLocal = vStart + error;
       Real vFrom = vStart;
+      bool rampOk = true;
 
-      // Ramp the local voltage override toward its new value in small
-      // sub-steps, re-solving after each -- the same discontinuity problem
-      // we already fixed for Q-limit switching applies here: applying the
-      // full correction in one shot was landing NR in a bad basin.
       for (int s = 1; s <= kContinuationSteps; ++s) {
         Real vStep = vStart + (vTargetLocal - vStart) * (Real)s / kContinuationSteps;
         int retries = 0;
         while (true) {
           setBusVoltageMagnitude(genIdx, vStep);
-          if (runNewtonRaphson("remote regulation sub-step") ||
-              retries >= kMaxRetriesPerStep) {
+          if (runNewtonRaphson("remote regulation sub-step")) {
             vFrom = vStep;
+            break;
+          }
+          if (retries >= kMaxRetriesPerStep) {
+            rampOk = false;
             break;
           }
           ++retries;
@@ -723,18 +723,23 @@ Bool PFSolver::resolveRemoteRegulation(){
               "did not converge, retrying with smaller step (attempt {})",
               genIdx, retries);
         }
+        if (!rampOk) break;
       }
 
-      // Land exactly on the fully-corrected value regardless of how the
-      // last retry settled.
+      if (!rampOk) {
+        setBusVoltageMagnitude(genIdx, vStart);
+        SPDLOG_LOGGER_WARN(mSLog,
+            "Remote regulation: ramp for gen bus idx {} failed; restoring and aborting",
+            genIdx);
+        return false;
+      }
+
       mLocalVSetOverride[genIdx] = vTargetLocal;
       setBusVoltageMagnitude(genIdx, vTargetLocal);
-    }
+    }   // <-- closes for (auto &[genIdx, regIdx] : mRegulatedBusOfGen)
 
     if (!anyAdjusted) return true;
 
-    // Confirm the combined state (all buses adjusted this pass) is still
-    // converged before checking whether another outer pass is needed.
     if (!runNewtonRaphson("remote regulation")) return false;
   }
 

@@ -595,7 +595,8 @@ CPS::Bool PFSolver::checkConvergence() {
   return true;
 }
 
-Bool PFSolver::runNewtonRaphson() {
+Bool PFSolver::runNewtonRaphson(const CPS::String &label) {
+  SPDLOG_LOGGER_INFO(mSLog, ">>> runNewtonRaphson start [{}]", label);
 
   // Reset values for new power flow run
   isConverged = false;
@@ -623,10 +624,8 @@ Bool PFSolver::runNewtonRaphson() {
     calculateMismatch();
 
       // TEMP DIAGNOSTIC: print convergence trend regardless of log level
-    std::cout << "iter " << i
-               << "  max|mismatch|=" << mF.cwiseAbs().maxCoeff()
-               << "  norm=" << mF.norm()
-               << std::endl;
+    SPDLOG_LOGGER_INFO(mSLog, "iter {} max|mismatch|={} norm={}",
+                   i, mF.cwiseAbs().maxCoeff(), mF.norm());
 
     SPDLOG_LOGGER_DEBUG(mSLog, "Mismatch vector at iteration {}: \n {}", i, mF);
     mSLog->flush();
@@ -635,11 +634,13 @@ Bool PFSolver::runNewtonRaphson() {
     isConverged = checkConvergence();
     mIterations = i;
   }
+  SPDLOG_LOGGER_INFO(mSLog, "<<< runNewtonRaphson end [{}] converged={} iters={}",
+                     label, isConverged, mIterations);
   return isConverged;
 }
 
 Bool PFSolver::solvePowerflow() {
-  Bool converged = runNewtonRaphson();
+  Bool converged = runNewtonRaphson("initial");
 
   // reactive limits and remote bus regulation handled
   if (!mEnforceReactiveLimits && mRegulatedBusOfGen.empty())
@@ -654,7 +655,7 @@ Bool PFSolver::solvePowerflow() {
         break; // all generators within their reactive limits
       }
       reclassifyBuses();
-      converged = runNewtonRaphson();
+      converged = runNewtonRaphson("Q-limit outer loop");
     }
 
     if (converged && !settled) {
@@ -693,7 +694,7 @@ Bool PFSolver::resolveRemoteRegulation(){
       setBusVoltageMagnitude(genIdx, mLocalVSetOverride[genIdx]);
     }
     if (!anyAdjusted) return true;
-    if (!runNewtonRaphson()) return false;
+    if (!runNewtonRaphson("remote regulation")) return false;
   }
   SPDLOG_LOGGER_WARN(mSLog, "Remote regulation did not settle within {} outer iterations",
                     mMaxRemoteRegIterations);

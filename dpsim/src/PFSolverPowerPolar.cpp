@@ -615,7 +615,7 @@ CPS::Real PFSolverPowerPolar::generatorReactivePowerPerUnit(
 CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
   static int callCount = 0;
   SPDLOG_LOGGER_INFO(mSLog, "=== enforceReactiveLimits() call #{} ===", ++callCount);
-  
+
   //temp
   static const std::map<CPS::String, std::pair<CPS::Real, CPS::Real>> pssePu = {
     // name                V_pu (kv/nominal_kv)      D_rad (deg * M_PI/180.0)
@@ -788,7 +788,6 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
     calculateMismatch();
     std::cout << "DIAGNOSTIC: mF.norm() at PSS/E's true solution = " << mF.norm() << std::endl;
     std::cout << "DIAGNOSTIC: mF.cwiseAbs().maxCoeff() = " << mF.cwiseAbs().maxCoeff() << std::endl;
-    continue;
   }
 
     // Apply PQ -> PV switches (restore voltage control).

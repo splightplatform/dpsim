@@ -175,7 +175,7 @@ protected:
   /// Solves the powerflow problem
   Bool solvePowerflow();
   /// Run a single Newton-Raphson solve with the current bus classification
-  Bool runNewtonRaphson();
+  Bool runNewtonRaphson(const CPS::String &label = "");
   /// Switch generators violating their Q limits between PV/PQ; base impl is a no-op
   virtual CPS::Bool enforceReactiveLimits() { return false; }
   /// Allocate Jacobian storage; dense by default, sparse subclass overrides

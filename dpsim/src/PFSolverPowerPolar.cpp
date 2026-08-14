@@ -703,6 +703,10 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
     // continuation sub-steps below solve against the right unknown set.
     reclassifyBuses();
 
+    // reset the voltage to unity, now that the bus is PQ
+    sol_V(idx) = 1.0;
+    sol_V_complex(idx) = Math::polar(sol_V(idx), sol_D(idx));
+
     // Ramp Q from its pre-pin value to the limit in fixed sub-steps, re-solving
     // after each -- so no single NR call has to cross the whole discontinuity
     const int kContinuationSteps = 5;

@@ -557,6 +557,7 @@ void PFSolverPowerPolar::calculatePAndQAtSlackBus() {
     sol_Q(node_idx) = S.imag();
   }
 }
+
 void PFSolverPowerPolar::calculateQAtPVBuses() {
   for (auto topoNode : mPVBuses) {
     auto node_idx = topoNode->matrixNodeIndex();
@@ -726,47 +727,20 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
         "Q-pin: bus {} qStart={:.6f} -> qLim={:.6f}; attempting direct solve",
         node->name(), qStart, qLimPU);
 
-    if (runNewtonRaphson(fmt::format("Q-pin direct bus {}", node->name()))) {
-      SPDLOG_LOGGER_INFO(mSLog, "Q-pin: direct solve succeeded for bus {}", node->name());
+     if (runNewtonRaphson(fmt::format("Q-pin direct bus {}", node->name()))) {
+      SPDLOG_LOGGER_INFO(mSLog, "Q-pin: direct solve succeeded for bus {}",
+                         node->name());
     } else {
       // The solution branch folds before Q reaches the limit, so continuing
-      // from the pre-switch (high-voltage) state cannot reach the Q-limited
-      // operating point. Restart from a depressed-voltage guess to target the
-      // lower-voltage basin directly.
+      // from the pre-switch state cannot reach the Q-limited operating point.
+      // Walk the load up instead, holding the pin fixed.
       SPDLOG_LOGGER_WARN(mSLog,
-          "Q-pin: direct solve failed for bus {}; restarting from low-voltage guess",
+          "Q-pin: direct solve failed for bus {}; trying load homotopy",
           node->name());
 
-      const CPS::Real kRestartV[] = {0.90, 0.85, 0.80, 1.00};
-      bool restartOk = false;
-
-      for (CPS::Real vGuess : kRestartV) {
-        for (auto n : mSystem.mNodes) {
-          UInt i = n->matrixNodeIndex();
-          // Leave slack and voltage-controlling PV buses at their setpoints;
-          // only free (PQ) magnitudes are reseeded.
-          bool isPQ = std::find(mPQBuses.begin(), mPQBuses.end(), n) != mPQBuses.end();
-          if (isPQ) {
-            sol_V(i) = vGuess;
-            sol_D(i) = 0.0;
-          }
-          sol_V_complex(i) = Math::polar(sol_V(i), sol_D(i));
-        }
-
-        SPDLOG_LOGGER_INFO(mSLog, "Q-pin: restart attempt at V={:.2f} pu", vGuess);
-
-        if (runNewtonRaphson(fmt::format("Q-pin restart bus {} V={:.2f}",
-                                        node->name(), vGuess))) {
-          SPDLOG_LOGGER_INFO(mSLog,
-              "Q-pin: restart at V={:.2f} converged for bus {}", vGuess, node->name());
-          restartOk = true;
-          break;
-        }
-      }
-
-      if (!restartOk) {
+      if (!solveWithLoadHomotopy(fmt::format("Q-pin bus {}", node->name()))) {
         SPDLOG_LOGGER_WARN(mSLog,
-            "Q-pin: all restarts failed for bus {}; restoring pre-pin state",
+            "Q-pin: homotopy failed for bus {}; restoring pre-pin state",
             node->name());
         sol_V = sol_V_prePin;
         sol_D = sol_D_prePin;
@@ -776,6 +750,7 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
         }
       }
     }
+
 
     calculateMismatch();
   }
@@ -799,6 +774,124 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
   }
 
   return !toPQ.empty() || !toPV.empty();
+}
+
+void PFSolverPowerPolar::computeLoadInjection(CPS::Vector &loadP,
+                                              CPS::Vector &loadQ) {
+  loadP = CPS::Vector::Zero(mSystem.mNodes.size());
+  loadQ = CPS::Vector::Zero(mSystem.mNodes.size());
+  for (auto node : mSystem.mNodes) {
+    UInt idx = node->matrixNodeIndex();
+    for (auto comp : mSystem.mComponentsAtNode[node]) {
+      if (auto load = std::dynamic_pointer_cast<CPS::SP::Ph1::Load>(comp)) {
+        loadP(idx) += load->attributeTyped<CPS::Real>("P_pu")->get();
+        loadQ(idx) += load->attributeTyped<CPS::Real>("Q_pu")->get();
+      }
+    }
+  }
+}
+
+Bool PFSolverPowerPolar::solveWithLoadHomotopy(const CPS::String &label) {
+  CPS::Vector loadP, loadQ;
+  computeLoadInjection(loadP, loadQ);
+
+  // Full-load targets, restored before returning.
+  CPS::Vector PespFull = Pesp;
+  CPS::Vector QespFull = Qesp;
+
+  const CPS::Real kLambdaStart = 0.5;
+  const CPS::Real kMinStep     = 1e-3;
+  const int       kMaxSteps    = 200;
+
+  // Pesp = gen - load. At scale lambda: gen - lambda*load
+  //                                   = Pesp_full + (1-lambda)*load
+  auto applyLambda = [&](CPS::Real lambda) {
+    for (auto node : mSystem.mNodes) {
+      UInt i = node->matrixNodeIndex();
+      if (std::abs(loadP(i)) < 1e-12 && std::abs(loadQ(i)) < 1e-12)
+        continue;
+      Pesp(i) = PespFull(i) + (1.0 - lambda) * loadP(i);
+      Qesp(i) = QespFull(i) + (1.0 - lambda) * loadQ(i);
+      sol_P(i) = Pesp(i);
+      sol_Q(i) = Qesp(i);
+    }
+  };
+
+  auto refreshComplex = [&]() {
+    for (auto node : mSystem.mNodes) {
+      UInt i = node->matrixNodeIndex();
+      sol_V_complex(i) = Math::polar(sol_V(i), sol_D(i));
+    }
+  };
+
+  auto restoreFullLoad = [&]() {
+    Pesp = PespFull;
+    Qesp = QespFull;
+    sol_P = Pesp;
+    sol_Q = Qesp;
+  };
+
+  // --- Phase 1: find a load level where the pinned problem is solvable.
+  CPS::Real lambda = kLambdaStart;
+  bool started = false;
+  for (int t = 0; t < 8; ++t) {
+    applyLambda(lambda);
+    SPDLOG_LOGGER_INFO(mSLog, "Homotopy: seeking start at lambda={:.4f}", lambda);
+    if (runNewtonRaphson(fmt::format("{} homotopy start lambda={:.4f}",
+                                     label, lambda))) {
+      started = true;
+      break;
+    }
+    lambda *= 0.5;
+  }
+  if (!started) {
+    SPDLOG_LOGGER_WARN(mSLog,
+        "Homotopy: no solvable load level found down to lambda={:.4f}", lambda);
+    restoreFullLoad();
+    return false;
+  }
+  SPDLOG_LOGGER_INFO(mSLog, "Homotopy: started at lambda={:.4f}", lambda);
+
+  // --- Phase 2: walk load up to 100%, warm-starting each step.
+  CPS::Real step = (1.0 - lambda) / 4.0;
+  int taken = 0;
+  while (lambda < 1.0 - 1e-12 && taken < kMaxSteps) {
+    CPS::Real trial = std::min(1.0, lambda + step);
+
+    CPS::Vector Vsave = sol_V;
+    CPS::Vector Dsave = sol_D;
+
+    applyLambda(trial);
+    SPDLOG_LOGGER_INFO(mSLog,
+        "Homotopy: step {} lambda {:.4f} -> {:.4f} (dlambda={:.4f})",
+        taken + 1, lambda, trial, step);
+
+    if (runNewtonRaphson(fmt::format("{} homotopy lambda={:.4f}",
+                                    label, trial))) {
+      lambda = trial;
+      ++taken;
+      step *= 1.5;                      // grow cautiously after success
+    } else {
+      sol_V = Vsave;                    // roll back to the last good point
+      sol_D = Dsave;
+      refreshComplex();
+      step *= 0.5;
+      SPDLOG_LOGGER_WARN(mSLog,
+          "Homotopy: step failed, shrinking to {:.6f}", step);
+      if (step < kMinStep) {
+        SPDLOG_LOGGER_WARN(mSLog,
+            "Homotopy: stalled at lambda={:.4f} (step below {:.1e}); "
+            "load level appears to be a limit point",
+            lambda, kMinStep);
+        restoreFullLoad();
+        return false;
+      }
+    }
+  }
+
+  // --- Phase 3: land exactly on full load.
+  restoreFullLoad();
+  return runNewtonRaphson(fmt::format("{} homotopy final", label));
 }
 
 void PFSolverPowerPolar::clearReactiveLimitState() {

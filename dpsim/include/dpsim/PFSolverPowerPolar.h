@@ -85,6 +85,14 @@ protected:
   CPS::Real loadReactivePowerPerUnit(CPS::TopologicalNode::Ptr node);
   /// Q-limit PV<->PQ switching pass (overrides the base no-op)
   CPS::Bool enforceReactiveLimits() override;
+
+  /// Per-bus aggregated load injection in pu (positive = consuming).
+  void computeLoadInjection(CPS::Vector &loadP, CPS::Vector &loadQ);
+  /// Solve the current (already-pinned) problem by walking load from a low
+  /// level up to 100%, warm-starting each step. Used when a direct solve
+  /// cannot reach the operating point.
+  Bool solveWithLoadHomotopy(const CPS::String &label);
+  
   /// Clear the Q-limit conversion bookkeeping between solves
   void clearReactiveLimitState() override;
   /// Buses switched PV->PQ by the Q-limit loop -> pinned at Qmax (true) or Qmin (false)

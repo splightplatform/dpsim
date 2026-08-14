@@ -717,6 +717,8 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
 
     // Ramp Q from its pre-pin value to the limit in fixed sub-steps, re-solving
     // after each -- so no single NR call has to cross the whole discontinuity
+    const int kContinuationSteps = 5;
+    const int kMaxRetriesPerStep = 3;
     const CPS::Real kMinHopFrac = 1.0 / 64.0;   // give up below this fraction of span
     const int kMaxSubSteps = 40;                 // hard iteration cap
     CPS::Real qFrom = qStart;

@@ -680,24 +680,66 @@ Bool PFSolver::solvePowerflow() {
 }
 
 Bool PFSolver::resolveRemoteRegulation(){
+  const int kContinuationSteps = 5;
+  const int kMaxRetriesPerStep = 3;
+
   for (UInt outer = 0; outer < mMaxRemoteRegIterations; ++outer){
     Bool anyAdjusted = false;
+
     for (auto &[genIdx, regIdx] : mRegulatedBusOfGen){
-      if (isQLimitPinned(genIdx))   // don't manipulate Qlimited gens
+      if (isQLimitPinned(genIdx))
         continue;
+
       Real target = mRegulatedVSetPU[genIdx];
       Real actual = busVoltageMagnitude(regIdx);
       Real error = target - actual;
-      if (std::abs(error) < mRemoteRegTolerance) continue;
+      if (std::abs(error) < mRemoteRegTolerance)
+        continue;
+
       anyAdjusted = true;
-      mLocalVSetOverride[genIdx] += error;
-      setBusVoltageMagnitude(genIdx, mLocalVSetOverride[genIdx]);
+
+      Real vStart = mLocalVSetOverride[genIdx];
+      Real vTargetLocal = vStart + error;  // fully-corrected local override
+      Real vFrom = vStart;
+
+      // Ramp the local voltage override toward its new value in small
+      // sub-steps, re-solving after each -- the same discontinuity problem
+      // we already fixed for Q-limit switching applies here: applying the
+      // full correction in one shot was landing NR in a bad basin.
+      for (int s = 1; s <= kContinuationSteps; ++s) {
+        Real vStep = vStart + (vTargetLocal - vStart) * (Real)s / kContinuationSteps;
+        int retries = 0;
+        while (true) {
+          setBusVoltageMagnitude(genIdx, vStep);
+          if (runNewtonRaphson("remote regulation sub-step") ||
+              retries >= kMaxRetriesPerStep) {
+            vFrom = vStep;
+            break;
+          }
+          ++retries;
+          vStep = vFrom + (vStep - vFrom) * 0.5;
+          SPDLOG_LOGGER_WARN(mSLog,
+              "Remote regulation continuation: sub-step for gen bus idx {} "
+              "did not converge, retrying with smaller step (attempt {})",
+              genIdx, retries);
+        }
+      }
+
+      // Land exactly on the fully-corrected value regardless of how the
+      // last retry settled.
+      mLocalVSetOverride[genIdx] = vTargetLocal;
+      setBusVoltageMagnitude(genIdx, vTargetLocal);
     }
+
     if (!anyAdjusted) return true;
+
+    // Confirm the combined state (all buses adjusted this pass) is still
+    // converged before checking whether another outer pass is needed.
     if (!runNewtonRaphson("remote regulation")) return false;
   }
+
   SPDLOG_LOGGER_WARN(mSLog, "Remote regulation did not settle within {} outer iterations",
-                    mMaxRemoteRegIterations);
+                     mMaxRemoteRegIterations);
   return false;
 }
 

@@ -720,13 +720,26 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
     const int kContinuationSteps = 5;
     const int kMaxRetriesPerStep = 3;
     CPS::Real qFrom = qStart;
+
+    SPDLOG_LOGGER_INFO(mSLog,
+        "Q-cont begin: bus {} qStart={:.6f} qLim={:.6f} span={:.6f}",
+        node->name(), qStart, qLimPU, qLimPU - qStart);
+
     for (int s = 1; s <= kContinuationSteps; ++s) {
-      CPS::Real qTarget = qStart + (qLimPU - qStart) * (CPS::Real)s / kContinuationSteps;
+      CPS::Real remaining = qLimPU - qFrom;
+      CPS::Real qTarget = qFrom + remaining / (kContinuationSteps - s + 1);
+      
+      SPDLOG_LOGGER_INFO(mSLog,
+          "Q-cont: step {}/{} qFrom={:.6f} qTarget={:.6f} qLim={:.6f} (hop={:.6f})",
+          s, kContinuationSteps, qFrom, qTarget, qLimPU, qTarget - qFrom);
+
       int retries = 0;
       while (true) {
         Qesp(idx) = qTarget - loadReactivePowerPerUnit(node);
         sol_Q(idx) = Qesp(idx);
-        if (runNewtonRaphson() || retries >= kMaxRetriesPerStep) {
+        if (runNewtonRaphson(fmt::format("Q-cont bus {} step {}/{} try {}",
+                                        node->name(), s, kContinuationSteps, retries)) ||
+            retries >= kMaxRetriesPerStep) {
           qFrom = qTarget;
           break;
         }

@@ -696,7 +696,7 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
 
     // Capture Q while still voltage-controlled, before switching bus type --
     // this is the continuation ramp's starting point.
-    // CPS::Real qStart = generatorReactivePowerPerUnit(node);
+    CPS::Real qStart = generatorReactivePowerPerUnit(node);
 
     mPVBuses.erase(std::remove(mPVBuses.begin(), mPVBuses.end(), node),
                   mPVBuses.end());
@@ -717,27 +717,27 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
 
     // Ramp Q from its pre-pin value to the limit in fixed sub-steps, re-solving
     // after each -- so no single NR call has to cross the whole discontinuity
-    // const int kContinuationSteps = 5;
-    // const int kMaxRetriesPerStep = 3;
-    // CPS::Real qFrom = qStart;
-    // for (int s = 1; s <= kContinuationSteps; ++s) {
-    //   CPS::Real qTarget = qStart + (qLimPU - qStart) * (CPS::Real)s / kContinuationSteps;
-    //   int retries = 0;
-    //   while (true) {
-    //     Qesp(idx) = qTarget - loadReactivePowerPerUnit(node);
-    //     sol_Q(idx) = Qesp(idx);
-    //     if (runNewtonRaphson() || retries >= kMaxRetriesPerStep) {
-    //       qFrom = qTarget;
-    //       break;
-    //     }
-    //     ++retries;
-    //     qTarget = qFrom + (qTarget - qFrom) * 0.5;
-    //     SPDLOG_LOGGER_WARN(mSLog,
-    //         "Q-limit continuation: sub-step for bus {} did not converge, "
-    //         "retrying with smaller step (attempt {})",
-    //         node->name(), retries);
-    //   }
-    // }
+    const int kContinuationSteps = 5;
+    const int kMaxRetriesPerStep = 3;
+    CPS::Real qFrom = qStart;
+    for (int s = 1; s <= kContinuationSteps; ++s) {
+      CPS::Real qTarget = qStart + (qLimPU - qStart) * (CPS::Real)s / kContinuationSteps;
+      int retries = 0;
+      while (true) {
+        Qesp(idx) = qTarget - loadReactivePowerPerUnit(node);
+        sol_Q(idx) = Qesp(idx);
+        if (runNewtonRaphson() || retries >= kMaxRetriesPerStep) {
+          qFrom = qTarget;
+          break;
+        }
+        ++retries;
+        qTarget = qFrom + (qTarget - qFrom) * 0.5;
+        SPDLOG_LOGGER_WARN(mSLog,
+            "Q-limit continuation: sub-step for bus {} did not converge, "
+            "retrying with smaller step (attempt {})",
+            node->name(), retries);
+      }
+    }
 
     // Land exactly on the true limit regardless of how the last retry settled.
     Qesp(idx) = qLimPU - loadReactivePowerPerUnit(node);

@@ -717,38 +717,47 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
 
     // Ramp Q from its pre-pin value to the limit in fixed sub-steps, re-solving
     // after each -- so no single NR call has to cross the whole discontinuity
-    const int kContinuationSteps = 5;
-    const int kMaxRetriesPerStep = 3;
+    const CPS::Real kMinHopFrac = 1.0 / 64.0;   // give up below this fraction of span
+    const int kMaxSubSteps = 40;                 // hard iteration cap
     CPS::Real qFrom = qStart;
+    CPS::Real span = qLimPU - qStart;
+    CPS::Real hop = span / kContinuationSteps;   // nominal hop, signed
 
     SPDLOG_LOGGER_INFO(mSLog,
         "Q-cont begin: bus {} qStart={:.6f} qLim={:.6f} span={:.6f}",
-        node->name(), qStart, qLimPU, qLimPU - qStart);
+        node->name(), qStart, qLimPU, span);
 
-    for (int s = 1; s <= kContinuationSteps; ++s) {
-      CPS::Real remaining = qLimPU - qFrom;
-      CPS::Real qTarget = qFrom + remaining / (kContinuationSteps - s + 1);
-      
+    int taken = 0;
+    while (std::abs(qLimPU - qFrom) > 1e-12 && taken < kMaxSubSteps) {
+      // never overshoot the limit
+      CPS::Real step = hop;
+      if (std::abs(step) > std::abs(qLimPU - qFrom))
+        step = qLimPU - qFrom;
+      CPS::Real qTarget = qFrom + step;
+
       SPDLOG_LOGGER_INFO(mSLog,
-          "Q-cont: step {}/{} qFrom={:.6f} qTarget={:.6f} qLim={:.6f} (hop={:.6f})",
-          s, kContinuationSteps, qFrom, qTarget, qLimPU, qTarget - qFrom);
+          "Q-cont: hop {} qFrom={:.6f} qTarget={:.6f} qLim={:.6f} (hop={:.6f})",
+          taken + 1, qFrom, qTarget, qLimPU, step);
 
-      int retries = 0;
-      while (true) {
-        Qesp(idx) = qTarget - loadReactivePowerPerUnit(node);
-        sol_Q(idx) = Qesp(idx);
-        if (runNewtonRaphson(fmt::format("Q-cont bus {} step {}/{} try {}",
-                                        node->name(), s, kContinuationSteps, retries)) ||
-            retries >= kMaxRetriesPerStep) {
-          qFrom = qTarget;
+      Qesp(idx) = qTarget - loadReactivePowerPerUnit(node);
+      sol_Q(idx) = Qesp(idx);
+
+      if (runNewtonRaphson(fmt::format("Q-cont bus {} hop {}", node->name(), taken + 1))) {
+        qFrom = qTarget;
+        ++taken;
+        // successful hop: cautiously grow back toward nominal
+        if (std::abs(hop) < std::abs(span) / kContinuationSteps)
+          hop *= 1.5;
+      } else {
+        hop *= 0.5;   // shrink and retry from the SAME qFrom
+        if (std::abs(hop) < std::abs(span) * kMinHopFrac) {
+          SPDLOG_LOGGER_WARN(mSLog,
+              "Q-cont: bus {} stalled at qFrom={:.6f} (hop below {:.1e} of span); aborting ramp",
+              node->name(), qFrom, kMinHopFrac);
           break;
         }
-        ++retries;
-        qTarget = qFrom + (qTarget - qFrom) * 0.5;
         SPDLOG_LOGGER_WARN(mSLog,
-            "Q-limit continuation: sub-step for bus {} did not converge, "
-            "retrying with smaller step (attempt {})",
-            node->name(), retries);
+            "Q-cont: hop failed, shrinking to {:.6f}", hop);
       }
     }
 

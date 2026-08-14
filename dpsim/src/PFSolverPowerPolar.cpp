@@ -386,13 +386,6 @@ void PFSolverPowerPolar::updateSolution() {
     calculateMismatch();
   }
 
-  double rawStepNorm = mX.norm();
-  std::cout << "  rawStepNorm=" << rawStepNorm
-            << "  baseScale(clamp)=" << baseScale
-            << "  finalScale=" << scale
-            << "  backtracks=" << attemptsUsed
-            << "  mLmLambda(next)=" << mLmLambda
-            << std::endl;
 }
 
 void PFSolverPowerPolar::setSolution() {

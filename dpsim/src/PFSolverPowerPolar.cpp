@@ -715,58 +715,68 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
     reclassifyBuses();
 
 
-    // Ramp Q from its pre-pin value to the limit in fixed sub-steps, re-solving
-    // after each -- so no single NR call has to cross the whole discontinuity
-    const int kContinuationSteps = 5;
-    // const int kMaxRetriesPerStep = 3;
-    const CPS::Real kMinHopFrac = 1e-4;   // give up below this fraction of span
-    const int kMaxSubSteps = 250;                 // hard iteration cap
-    CPS::Real qFrom = qStart;
-    CPS::Real span = qLimPU - qStart;
-    CPS::Real hop = span / kContinuationSteps;   // nominal hop, signed
+    CPS::Vector sol_V_prePin = sol_V;
+    CPS::Vector sol_D_prePin = sol_D;
+
+    // Pin Q directly at the limit.
+    Qesp(idx) = qLimPU - loadReactivePowerPerUnit(node);
+    sol_Q(idx) = Qesp(idx);
 
     SPDLOG_LOGGER_INFO(mSLog,
-        "Q-cont begin: bus {} qStart={:.6f} qLim={:.6f} span={:.6f}",
-        node->name(), qStart, qLimPU, span);
+        "Q-pin: bus {} qStart={:.6f} -> qLim={:.6f}; attempting direct solve",
+        node->name(), qStart, qLimPU);
 
-    int taken = 0;
-    while (std::abs(qLimPU - qFrom) > 1e-12 && taken < kMaxSubSteps) {
-      // never overshoot the limit
-      CPS::Real step = hop;
-      if (std::abs(step) > std::abs(qLimPU - qFrom))
-        step = qLimPU - qFrom;
-      CPS::Real qTarget = qFrom + step;
+    if (runNewtonRaphson(fmt::format("Q-pin direct bus {}", node->name()))) {
+      SPDLOG_LOGGER_INFO(mSLog, "Q-pin: direct solve succeeded for bus {}", node->name());
+    } else {
+      // The solution branch folds before Q reaches the limit, so continuing
+      // from the pre-switch (high-voltage) state cannot reach the Q-limited
+      // operating point. Restart from a depressed-voltage guess to target the
+      // lower-voltage basin directly.
+      SPDLOG_LOGGER_WARN(mSLog,
+          "Q-pin: direct solve failed for bus {}; restarting from low-voltage guess",
+          node->name());
 
-      SPDLOG_LOGGER_INFO(mSLog,
-          "Q-cont: hop {} qFrom={:.6f} qTarget={:.6f} qLim={:.6f} (hop={:.6f})",
-          taken + 1, qFrom, qTarget, qLimPU, step);
+      const CPS::Real kRestartV[] = {0.90, 0.85, 0.80, 1.00};
+      bool restartOk = false;
 
-      Qesp(idx) = qTarget - loadReactivePowerPerUnit(node);
-      sol_Q(idx) = Qesp(idx);
+      for (CPS::Real vGuess : kRestartV) {
+        for (auto n : mSystem.mNodes) {
+          UInt i = n->matrixNodeIndex();
+          // Leave slack and voltage-controlling PV buses at their setpoints;
+          // only free (PQ) magnitudes are reseeded.
+          bool isPQ = std::find(mPQBuses.begin(), mPQBuses.end(), n) != mPQBuses.end();
+          if (isPQ) {
+            sol_V(i) = vGuess;
+            sol_D(i) = 0.0;
+          }
+          sol_V_complex(i) = Math::polar(sol_V(i), sol_D(i));
+        }
 
-      if (runNewtonRaphson(fmt::format("Q-cont bus {} hop {}", node->name(), taken + 1))) {
-        qFrom = qTarget;
-        ++taken;
-        // successful hop: cautiously grow back toward nominal
-        if (std::abs(hop) < std::abs(span) / kContinuationSteps)
-          hop *= 1.5;
-      } else {
-        hop *= 0.5;   // shrink and retry from the SAME qFrom
-        if (std::abs(hop) < std::abs(span) * kMinHopFrac) {
-          SPDLOG_LOGGER_WARN(mSLog,
-              "Q-cont: bus {} stalled at qFrom={:.6f} (hop below {:.1e} of span); aborting ramp",
-              node->name(), qFrom, kMinHopFrac);
+        SPDLOG_LOGGER_INFO(mSLog, "Q-pin: restart attempt at V={:.2f} pu", vGuess);
+
+        if (runNewtonRaphson(fmt::format("Q-pin restart bus {} V={:.2f}",
+                                        node->name(), vGuess))) {
+          SPDLOG_LOGGER_INFO(mSLog,
+              "Q-pin: restart at V={:.2f} converged for bus {}", vGuess, node->name());
+          restartOk = true;
           break;
         }
+      }
+
+      if (!restartOk) {
         SPDLOG_LOGGER_WARN(mSLog,
-            "Q-cont: hop failed, shrinking to {:.6f}", hop);
+            "Q-pin: all restarts failed for bus {}; restoring pre-pin state",
+            node->name());
+        sol_V = sol_V_prePin;
+        sol_D = sol_D_prePin;
+        for (auto n : mSystem.mNodes) {
+          UInt i = n->matrixNodeIndex();
+          sol_V_complex(i) = Math::polar(sol_V(i), sol_D(i));
+        }
       }
     }
 
-    // Land exactly on the true limit regardless of how the last retry settled.
-    Qesp(idx) = qLimPU - loadReactivePowerPerUnit(node);
-    sol_Q(idx) = Qesp(idx);
-    
     calculateMismatch();
   }
 

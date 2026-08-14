@@ -837,8 +837,8 @@ Bool PFSolverPowerPolar::solveWithLoadHomotopy(const CPS::String &label) {
     applyLambda(lambda);
     SPDLOG_LOGGER_INFO(mSLog, "Homotopy: seeking start at lambda={:.4f}", lambda);
 
-    bool stepOk = runNewtonRaphson(fmt::format("{} homotopy lambda={:.4f}",
-                                              label, trial));
+    bool stepOk = runNewtonRaphson(fmt::format("{} homotopy start lambda={:.4f}",
+                                               label, lambda));
     if (stepOk && !mRegulatedBusOfGen.empty())
       stepOk = resolveRemoteRegulation();
 

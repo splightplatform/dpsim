@@ -241,11 +241,7 @@ void EMT::Ph3::SynchronGeneratorTrStab::step(Real time) {
   **mElecActivePower = -1. * (intfVoltageDQ(0, 0) * intfCurrentDQ(0, 0) +
                               intfVoltageDQ(1, 0) * intfCurrentDQ(1, 0));
 
-  // The damping factor Kd is adjusted to obtain a damping ratio of 0.3
-  // Real MaxElecActivePower= Math::abs(mEp) * Math::abs((**mIntfVoltage)(0,0)) / mXpd;
-  // mKd=4*0.3*sqrt(mNomOmega*mInertia*MaxElecActivePower*0.5);
-  mKd = 1 * mNomPower;
-
+  // remove update of mKd
   // #### Calculate state for time step k+1 ####
   // semi-implicit Euler or symplectic Euler method for mechanical equations
   Real dOmMech =

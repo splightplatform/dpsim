@@ -173,6 +173,7 @@
 #include <dpsim-models/EMT/EMT_Ph3_SynchronGeneratorDQODE.h>
 #endif
 #include <dpsim-models/EMT/EMT_Ph3_NetworkInjection.h>
+#include <dpsim-models/EMT/EMT_Ph3_PQLoadCS.h>
 #include <dpsim-models/EMT/EMT_Ph3_PiLine.h>
 #include <dpsim-models/EMT/EMT_Ph3_PiecewiseLinearInductor.h>
 #include <dpsim-models/EMT/EMT_Ph3_RXLoad.h>

@@ -393,6 +393,15 @@ void addEMTPh3Components(py::module_ mEMTPh3) {
            "reactance_in_series"_a = false)
       .def("connect", &CPS::EMT::Ph3::RXLoad::connect);
 
+  py::class_<CPS::EMT::Ph3::PQLoadCS, std::shared_ptr<CPS::EMT::Ph3::PQLoadCS>,
+             CPS::SimPowerComp<CPS::Real>>(mEMTPh3, "PQLoadCS",
+                                           py::multiple_inheritance())
+      .def(py::init<std::string, CPS::Logger::Level>(), "name"_a,
+           "loglevel"_a = CPS::Logger::Level::off)
+      .def("set_parameters", &CPS::EMT::Ph3::PQLoadCS::setParameters,
+           "active_power"_a, "reactive_power"_a, "volt"_a)
+      .def("connect", &CPS::EMT::Ph3::PQLoadCS::connect);
+
   py::class_<CPS::EMT::Ph3::Shunt, std::shared_ptr<CPS::EMT::Ph3::Shunt>,
              CPS::SimPowerComp<CPS::Real>>(mEMTPh3, "Shunt",
                                            py::multiple_inheritance())

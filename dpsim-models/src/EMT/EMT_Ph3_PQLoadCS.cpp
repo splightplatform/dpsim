@@ -97,8 +97,22 @@ void EMT::Ph3::PQLoadCS::initializeParentFromNodesAndTerminals(
 }
 
 void EMT::Ph3::PQLoadCS::updateSetPoint() {
+  // Phase-to-neutral RMS magnitude from the instantaneous, previous-step
+  // solved terminal voltage. For a balanced three-phase set the sum of the
+  // squared instantaneous samples is time-invariant (independent of the
+  // actual phase angle), so this is exact and needs no PLL:
+  //   va^2+vb^2+vc^2 = 3/2 * Vpeak^2  =>  Vrms = sqrt((va^2+vb^2+vc^2)/3)
+  Real vMagRms = sqrt(((**mIntfVoltage)(0, 0) * (**mIntfVoltage)(0, 0) +
+                       (**mIntfVoltage)(1, 0) * (**mIntfVoltage)(1, 0) +
+                       (**mIntfVoltage)(2, 0) * (**mIntfVoltage)(2, 0)) /
+                      3.);
+  // Not measured yet (first step, before any MNA solve has run): fall back
+  // to the nominal voltage used at initialization.
+  if (vMagRms < 1e-6)
+    vMagRms = **mNomVoltage / sqrt(3.);
+
   Complex powerPerPhase = Complex(**mActivePower, **mReactivePower) / 3.;
-  Complex vPhase = Math::polar(**mNomVoltage / sqrt(3.), mVoltageRefAngle);
+  Complex vPhase = Math::polar(vMagRms, mVoltageRefAngle);
   Complex iPhase =
       (vPhase != Complex(0, 0)) ? std::conj(powerPerPhase / vPhase) : 0.;
 

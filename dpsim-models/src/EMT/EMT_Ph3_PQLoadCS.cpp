@@ -67,13 +67,13 @@ void EMT::Ph3::PQLoadCS::initializeParentFromNodesAndTerminals(
     **mNomVoltage = std::abs(mTerminals[0]->initialSingleVoltage());
   }
 
-  // Balanced three-phase current at nominal voltage, phase A referenced to
-  // the synchronous frame origin (consistent with the RMS3PH_TO_PEAK1PH /
-  // singlePhaseVariableToThreePhase convention used across the EMT models):
-  // the actual power delivered will only match the setpoint exactly while
-  // the terminal voltage stays close to V_nom<0.
+  mVoltageRefAngle = Math::phase(mTerminals[0]->initialSingleVoltage());
+
+  // Balanced three-phase current at nominal voltage: the actual power
+  // delivered will only match the setpoint exactly while the terminal
+  // voltage stays close to V_nom<mVoltageRefAngle.
   Complex powerPerPhase = Complex(**mActivePower, **mReactivePower) / 3.;
-  Complex vPhase = **mNomVoltage / sqrt(3.);
+  Complex vPhase = Math::polar(**mNomVoltage / sqrt(3.), mVoltageRefAngle);
   Complex iPhase =
       (vPhase != Complex(0, 0)) ? std::conj(powerPerPhase / vPhase) : 0.;
 
@@ -98,7 +98,7 @@ void EMT::Ph3::PQLoadCS::initializeParentFromNodesAndTerminals(
 
 void EMT::Ph3::PQLoadCS::updateSetPoint() {
   Complex powerPerPhase = Complex(**mActivePower, **mReactivePower) / 3.;
-  Complex vPhase = **mNomVoltage / sqrt(3.);
+  Complex vPhase = Math::polar(**mNomVoltage / sqrt(3.), mVoltageRefAngle);
   Complex iPhase =
       (vPhase != Complex(0, 0)) ? std::conj(powerPerPhase / vPhase) : 0.;
 

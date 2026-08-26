@@ -26,6 +26,7 @@ class PQLoadCS : public CompositePowerComp<Real>,
 protected:
   /// Internal current source
   std::shared_ptr<EMT::Ph3::CurrentSource> mSubCurrentSource;
+  Real mVoltageRefAngle = 0;
   /// Recomputes the current reference from the present P/Q setpoint
   void updateSetPoint();
   void updateIntfValues();

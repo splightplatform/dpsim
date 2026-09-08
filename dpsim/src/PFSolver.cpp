@@ -71,9 +71,12 @@ void PFSolver::setUpJacobianStorage() {
 }
 
 void PFSolver::solveJacobianSystem() {
-  auto sparseJ = mJ.sparseView();
-  Eigen::SparseLU<SparseMatrix> lu(sparseJ);
-  mX = lu.solve(mF);
+  CPS::Matrix JtJ = mJ.transpose() * mJ;
+  for (int k = 0; k < JtJ.rows(); k++)
+    JtJ(k, k) += mLmLambda;
+
+  CPS::Vector JtF = mJ.transpose() * mF;
+  mX = JtJ.ldlt().solve(JtF);
 }
 
 void PFSolver::assignMatrixNodeIndices() {
@@ -236,6 +239,11 @@ void PFSolver::determinePFBusType() {
       SPDLOG_LOGGER_INFO(
           mSLog, "{}: VD, PV and PQ type component connect -> set as VD bus",
           node->name());
+      mVDBuses.push_back(node);
+    } else if (!connectedPV && connectedPQ && connectedVD){
+      SPDLOG_LOGGER_INFO(
+        mSLog, "{}: VD and PQ type component connected -> set as VD bus",
+        node->name());
       mVDBuses.push_back(node);
     } else {
       std::stringstream ss;
@@ -573,7 +581,8 @@ CPS::Bool PFSolver::checkConvergence() {
   return true;
 }
 
-Bool PFSolver::runNewtonRaphson() {
+Bool PFSolver::runNewtonRaphson(const CPS::String &label) {
+  SPDLOG_LOGGER_INFO(mSLog, ">>> runNewtonRaphson start [{}]", label);
 
   // Reset values for new power flow run
   isConverged = false;
@@ -600,6 +609,9 @@ Bool PFSolver::runNewtonRaphson() {
     // Calculate the mismatch according to the current solution
     calculateMismatch();
 
+    SPDLOG_LOGGER_INFO(mSLog, "iter {} max|mismatch|={} norm={}",
+                   i, mF.cwiseAbs().maxCoeff(), mF.norm());
+
     SPDLOG_LOGGER_DEBUG(mSLog, "Mismatch vector at iteration {}: \n {}", i, mF);
     mSLog->flush();
 
@@ -607,6 +619,8 @@ Bool PFSolver::runNewtonRaphson() {
     isConverged = checkConvergence();
     mIterations = i;
   }
+  SPDLOG_LOGGER_INFO(mSLog, "<<< runNewtonRaphson end [{}] converged={} iters={}",
+                     label, isConverged, mIterations);
   return isConverged;
 }
 

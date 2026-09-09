@@ -128,7 +128,10 @@ void PFSolverPowerPolar::generateInitialSolution(Real time,
       if (auto gen = std::dynamic_pointer_cast<CPS::SP::Ph1::SynchronGenerator>(
               comp)) {
         sol_P(idx) += gen->attributeTyped<CPS::Real>("P_set_pu")->get();
-        sol_V(idx) = gen->attributeTyped<CPS::Real>("V_set_pu")->get();
+        auto it = mLocalVSetOverride.find(idx);
+        sol_V(idx) = (it != mLocalVSetOverride.end())
+                       ? it->second
+                       : gen->attributeTyped<CPS::Real>("V_set_pu")->get();
       } else if (auto load =
                      std::dynamic_pointer_cast<CPS::SP::Ph1::Load>(comp)) {
         sol_P(idx) -= load->attributeTyped<CPS::Real>("P_pu")->get();
@@ -664,17 +667,16 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
       toPV.push_back(node);
   }
 
-  // Apply PV -> PQ switches (pin reactive injection at the limit).
+  // Apply PV -> PQ switches (pin reactive injection at the limit via continuation).
   for (auto &c : toPQ) {
     auto node = std::get<0>(c);
     bool atMax = std::get<1>(c);
     CPS::Real qLimPU = std::get<2>(c);
+    UInt idx = node->matrixNodeIndex();
+
     mPVBuses.erase(std::remove(mPVBuses.begin(), mPVBuses.end(), node),
                    mPVBuses.end());
     mPQBuses.push_back(node);
-    UInt idx = node->matrixNodeIndex();
-    Qesp(idx) = qLimPU - loadReactivePowerPerUnit(node);
-    sol_Q(idx) = Qesp(idx);
     mQLimitConvertedAtMax[node] = atMax;
     if (++mQLimitSwitchCount[node] >= mMaxQLimitSwitchesPerBus)
       SPDLOG_LOGGER_WARN(
@@ -683,6 +685,31 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
     else
       SPDLOG_LOGGER_INFO(mSLog, "Q-limit: PV bus {} -> PQ pinned at {}",
                          node->name(), atMax ? "Qmax" : "Qmin");
+
+    // Rebuild index arrays now that this bus's classification changed, so the
+    // solve below runs against the right unknown set.
+    reclassifyBuses();
+
+    CPS::Vector sol_V_prePin = sol_V;
+    CPS::Vector sol_D_prePin = sol_D;
+
+    // Pin Q directly at the limit.
+    Qesp(idx) = qLimPU - loadReactivePowerPerUnit(node);
+    sol_Q(idx) = Qesp(idx);
+
+    if (!runNewtonRaphson(fmt::format("Q-pin bus {}", node->name()))) {
+      SPDLOG_LOGGER_WARN(mSLog,
+          "Q-pin: direct solve failed for bus {}; restoring pre-pin state",
+          node->name());
+      sol_V = sol_V_prePin;
+      sol_D = sol_D_prePin;
+      for (auto n : mSystem.mNodes) {
+        UInt i = n->matrixNodeIndex();
+        sol_V_complex(i) = Math::polar(sol_V(i), sol_D(i));
+      }
+    }
+
+    calculateMismatch();
   }
 
   // Apply PQ -> PV switches (restore voltage control).
@@ -692,7 +719,11 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
     mPVBuses.push_back(node);
     CPS::Real qMaxPU, qMinPU, vSetPU;
     busLimits(node, qMaxPU, qMinPU, vSetPU);
+    CPS::Real vBefore = sol_V(node->matrixNodeIndex());
     sol_V(node->matrixNodeIndex()) = vSetPU;
+    SPDLOG_LOGGER_INFO(mSLog,
+        "Q-limit: PQ bus {} -> PV, voltage snapped {:.6f} -> {:.6f} ({:+.2f}%)",
+        node->name(), vBefore, vSetPU, (vSetPU - vBefore) / vBefore * 100.0);
     mQLimitConvertedAtMax.erase(node);
     ++mQLimitSwitchCount[node];
     SPDLOG_LOGGER_INFO(mSLog, "Q-limit: PQ bus {} -> PV (constraint relaxed)",

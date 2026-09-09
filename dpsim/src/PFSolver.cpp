@@ -57,6 +57,20 @@ void PFSolver::initialize() {
   setBaseApparentPower();
   assignMatrixNodeIndices();
   initializeComponents();
+
+  // Set up datastructures for remote bus regulation.
+  for (auto gen : mSynchronGenerators) {
+    UInt g = gen->node(0)->matrixNodeIndex();
+    auto rn = gen->regulatedNode();
+    SPDLOG_LOGGER_INFO(mSLog, "Gen at bus idx {}: regulatedNode = {}",
+                       g, rn ? std::to_string(rn->matrixNodeIndex()) : "null");
+    if (rn && rn->matrixNodeIndex() != g) {
+      UInt r = rn->matrixNodeIndex();
+      mRegulatedBusOfGen[g] = r;
+      mRegulatedVSetPU[g] = gen->attributeTyped<Real>("V_set_pu")->get();
+      mLocalVSetOverride[g] = mRegulatedVSetPU[g];
+    }
+  }
   determinePFBusType();
   propagateAndVerifyBaseVoltage();
   composeAdmittanceMatrix();
@@ -625,33 +639,114 @@ Bool PFSolver::runNewtonRaphson(const CPS::String &label) {
 }
 
 Bool PFSolver::solvePowerflow() {
-  Bool converged = runNewtonRaphson();
+  Bool converged = runNewtonRaphson("initial");
 
-  if (!mEnforceReactiveLimits)
+  if (!mEnforceReactiveLimits && mRegulatedBusOfGen.empty())
     return converged;
 
-  // Outer loop: switch PV<->PQ on Q-limit violations, re-solve until no bus switches.
-  Bool settled = false;
-  for (CPS::UInt outer = 0; converged && outer < mMaxOuterIterations; ++outer) {
-    if (!enforceReactiveLimits()) {
-      settled = true;
-      break; // all generators within their reactive limits
+  if (mEnforceReactiveLimits) {
+    // Outer loop: switch PV<->PQ on Q-limit violations, re-solve until no bus switches.
+    Bool settled = false;
+    for (CPS::UInt outer = 0; converged && outer < mMaxOuterIterations; ++outer) {
+      if (!enforceReactiveLimits()) {
+        settled = true;
+        break; // all generators within their reactive limits
+      }
+      reclassifyBuses();
+      converged = runNewtonRaphson("Q-limit outer loop");
     }
-    reclassifyBuses();
-    converged = runNewtonRaphson();
+
+    if (converged && !settled) {
+      // Unsettled PV/PQ classification must not look converged to setSolution().
+      SPDLOG_LOGGER_WARN(
+          mSLog,
+          "Q-limit outer loop did not settle within {} iterations; "
+          "PV/PQ classification may still be oscillating",
+          mMaxOuterIterations);
+      isConverged = false;
+      converged = false;
+    }
   }
 
-  if (converged && !settled) {
-    // Unsettled PV/PQ classification must not look converged to setSolution().
-    SPDLOG_LOGGER_WARN(
-        mSLog,
-        "Q-limit outer loop did not settle within {} iterations; "
-        "PV/PQ classification may still be oscillating",
-        mMaxOuterIterations);
-    isConverged = false;
-    converged = false;
-  }
+  if (!converged && !mRegulatedBusOfGen.empty())
+    SPDLOG_LOGGER_WARN(mSLog, "Skipping remote-bus regulation: base solve (with Q-limits) did not converge");
+
+  if (converged && !mRegulatedBusOfGen.empty())
+    converged = resolveRemoteRegulation();
+
   return converged;
+}
+
+Bool PFSolver::resolveRemoteRegulation() {
+  const int kContinuationSteps = 5;
+  const int kMaxRetriesPerStep = 3;
+
+  for (UInt outer = 0; outer < mMaxRemoteRegIterations; ++outer) {
+    Bool anyAdjusted = false;
+
+    for (auto &[genIdx, regIdx] : mRegulatedBusOfGen) {
+      if (isQLimitPinned(genIdx))
+        continue;
+
+      Real target = mRegulatedVSetPU[genIdx];
+      Real actual = busVoltageMagnitude(regIdx);
+      Real error = target - actual;
+      if (std::abs(error) < mRemoteRegTolerance)
+        continue;
+
+      anyAdjusted = true;
+
+      Real vStart = busVoltageMagnitude(genIdx);
+      Real vTargetLocal = vStart + error;
+      Real vFrom = vStart;
+      bool rampOk = true;
+
+      for (int s = 1; s <= kContinuationSteps; ++s) {
+        Real vStep = vStart + (vTargetLocal - vStart) * (Real)s / kContinuationSteps;
+        int retries = 0;
+        while (true) {
+          setBusVoltageMagnitude(genIdx, vStep);
+          if (runNewtonRaphson("remote regulation sub-step")) {
+            vFrom = vStep;
+            break;
+          }
+          if (retries >= kMaxRetriesPerStep) {
+            rampOk = false;
+            break;
+          }
+          ++retries;
+          vStep = vFrom + (vStep - vFrom) * 0.5;
+          SPDLOG_LOGGER_WARN(mSLog,
+              "Remote regulation continuation: sub-step for gen bus idx {} "
+              "did not converge, retrying with smaller step (attempt {})",
+              genIdx, retries);
+        }
+        if (!rampOk)
+          break;
+      }
+
+      if (!rampOk) {
+        setBusVoltageMagnitude(genIdx, vStart);
+        SPDLOG_LOGGER_WARN(mSLog,
+            "Remote regulation: ramp for gen bus idx {} failed; restoring and aborting",
+            genIdx);
+        return false;
+      }
+
+      mLocalVSetOverride[genIdx] = vTargetLocal;
+      setBusVoltageMagnitude(genIdx, vTargetLocal);
+    }
+
+    if (!anyAdjusted)
+      return true;
+
+    if (!runNewtonRaphson("remote regulation"))
+      return false;
+  }
+
+  SPDLOG_LOGGER_WARN(mSLog, "Remote regulation did not settle within {} outer iterations",
+                     mMaxRemoteRegIterations);
+  return false;
 }
 
 void PFSolver::SolveTask::execute(Real time, Int timeStepCount) {

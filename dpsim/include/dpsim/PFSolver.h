@@ -10,6 +10,7 @@
 
 #include <cmath>
 #include <iterator>
+#include <map>
 
 #include "dpsim-models/Components.h"
 #include "dpsim-models/SystemTopology.h"
@@ -23,6 +24,20 @@ protected:
   // Levenberg-Marquardt regularization for the Newton-Raphson solve
   Real mLmLambda = 1e-3;
   UInt mStagnantIterations = 0;
+
+  // Remote regulation
+  std::map<CPS::UInt, CPS::UInt> mRegulatedBusOfGen; // genBusIdx -> targetBusIdx (only entries where they differ)
+  std::map<CPS::UInt, CPS::Real> mLocalVSetOverride; // genBusIdx -> current local V_set_pu being tuned
+  std::map<CPS::UInt, CPS::Real> mRegulatedVSetPU;   // genBusIdx -> target pu at the remote bus
+  CPS::Real mRemoteRegTolerance = 1e-5;
+  CPS::UInt mMaxRemoteRegIterations = 30;
+
+  /// Drive local PV setpoints so remote-regulated buses reach their target voltage
+  Bool resolveRemoteRegulation();
+  /// Current solved |V| at a bus, in the solver's own representation.
+  virtual CPS::Real busVoltageMagnitude(CPS::UInt busIdx) = 0;
+  virtual void setBusVoltageMagnitude(CPS::UInt busIdx, CPS::Real value) = 0;
+  virtual CPS::Bool isQLimitPinned(CPS::UInt busIdx) { return false; } // base: no Q-limit concept
 
   /// Number of PQ nodes
   UInt mNumPQBuses = 0;

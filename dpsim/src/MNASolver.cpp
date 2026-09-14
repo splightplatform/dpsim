@@ -275,9 +275,8 @@ template <typename VarType> void MnaSolver<VarType>::initializeSystem() {
                      "-- Initialize MNA system matrices and source vector");
   mRightSideVector.setZero();
 
-  // just a sanity check in case we change the static
-  // initialization of the switch number in the future
-  if (mSwitches.size() > sizeof(std::size_t) * 8) {
+  if ((mFrequencyParallel || !mSystemMatrixRecomputationEnabled) &&
+      mSwitches.size() >= sizeof(std::size_t) * 8) {
     throw SystemError("Too many Switches.");
   }
 

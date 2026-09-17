@@ -177,6 +177,7 @@ list(APPEND MODELS_SOURCES
 	SP/SP_Ph1_Load.cpp
 	SP/SP_Ph1_Switch.cpp
 	SP/SP_Ph1_Transformer.cpp
+	SP/SP_Ph1_Transformer3W.cpp
 	SP/SP_Ph1_SolidStateTransformer.cpp
 	SP/SP_Ph1_Shunt.cpp
 	SP/SP_Ph1_SynchronGenerator.cpp

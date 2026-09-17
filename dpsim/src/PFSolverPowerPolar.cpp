@@ -463,6 +463,16 @@ void PFSolverPowerPolar::calculateBranchFlow() {
         Math::elementwiseProduct(v, current.conjugate());
     trafo->updateBranchFlow(current, flow_on_branch);
   }
+  for (auto xfmr : mTransformers3W) {
+    VectorComp v(3); 
+    v(0) = sol_V_complex.coeff(xfmr->node(0)->matrixNodeIndex()); 
+    v(1) = sol_V_complex.coeff(xfmr->node(1)->matrixNodeIndex()); 
+    v(2) = sol_V_complex.coeff(xfmr->node(2)->matrixNodeIndex()); 
+    
+    VectorComp current = xfmr->Y_element() * v; 
+    VectorComp flow_on_branch = Math::elementwiseProduct(v, current.conjugate()); 
+    xfmr->updateBranchFlow(current, flow_on_branch); 
+  }
 }
 
 void PFSolverPowerPolar::calculateNodalInjection() {
@@ -483,6 +493,24 @@ void PFSolverPowerPolar::calculateNodalInjection() {
           trafo->storeNodalInjection(
               sol_S_complex.coeff(node->matrixNodeIndex()));
           break;
+        }
+        if (std::shared_ptr<CPS::SP::Ph1::Transformer3W> xfmr = 
+                std::dynamic_pointer_cast<CPS::SP::Ph1::Transformer3W>(comp)) {
+          if (xfmr->terminal(0)->node()->name() == node->name()){
+            xfmr->storeNodalInjection(Base::Ph1::Winding3W::Primary, 
+                                      sol_S_complex.coeff(node->matrixNodeIndex()));
+            break; 
+          }
+          if (xfmr->terminal(1)->node()->name() == node->name()){
+            xfmr->storeNodalInjection(Base::Ph1::Winding3W::Secondary, 
+                                      sol_S_complex.coeff(node->matrixNodeIndex()));
+            break; 
+          }
+          if (xfmr->terminal(2)->node()->name() == node->name()){
+            xfmr->storeNodalInjection(Base::Ph1::Winding3W::Tertiary, 
+                                      sol_S_complex.coeff(node->matrixNodeIndex()));
+            break; 
+          }
         }
       }
     }

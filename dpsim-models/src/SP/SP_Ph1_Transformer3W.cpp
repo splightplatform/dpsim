@@ -4,11 +4,9 @@
 using namespace CPS;
 
 using Winding = CPS::Base::Ph1::Winding3W;
+using CPS::Base::Ph1::AllWindings3W;
 
 namespace {
-/// Iteration helper so the winding loops below read as loops 
-constexpr std::array<Winding, 3> AllWindings{
-    {Winding::Primary, Winding::Secondary, Winding::Tertiary}};
 
 /// Short tag used in sub-component names and log lines
 const char *windingTag(Winding w) {
@@ -66,7 +64,7 @@ void SP::Ph1::Transformer3W::assignVirtualNodeSlots() {
   UInt next = 0;
   mVnStar = next++;
 
-  for (auto w : AllWindings) {
+  for (auto w : AllWindings3W) {
     if (mWithResistiveLosses)
       mVnMid[idx(w)] = next++;
 
@@ -89,7 +87,7 @@ void SP::Ph1::Transformer3W::assignVirtualNodeSlots() {
   SPDLOG_LOGGER_INFO(mSLog,
                      "Virtual node layout (reference winding = {}): star = {}",
                      windingTag(mReferenceWinding), mVnStar);
-  for (auto w : AllWindings)
+  for (auto w : AllWindings3W)
     SPDLOG_LOGGER_INFO(mSLog, "  winding {}: mid = {}, preIdeal = {}, i = {}",
                        windingTag(w), mVnMid[idx(w)], mVnPreIdeal[idx(w)],
                        mVnCurrent[idx(w)]);
@@ -107,7 +105,7 @@ SimPowerComp<Complex>::Ptr SP::Ph1::Transformer3W::clone(String name) {
   std::array<Real, NumWindings> resistanceArr{{0., 0., 0.}};
   std::array<Real, NumWindings> inductanceArr{{0., 0., 0.}};
 
-  for (auto w : AllWindings) {
+  for (auto w : AllWindings3W) {
     nomVoltageArr[idx(w)] = nominalVoltage(w);
     ratedPowerArr[idx(w)] = ratedPower(w);
     ratioAbsArr[idx(w)] = std::abs(ratio(w));
@@ -185,7 +183,7 @@ void SP::Ph1::Transformer3W::createSubComponents() {
   resolveReferenceWinding();
   assignVirtualNodeSlots();
 
-  for (auto w : AllWindings)
+  for (auto w : AllWindings3W)
     connectWinding(w);
 
   // Snubbers are sized off the rated power, so rating required
@@ -195,7 +193,7 @@ void SP::Ph1::Transformer3W::createSubComponents() {
 
   // ensure we can safely make the snubbers
   if (snubbersEnabled) {
-    for (auto w : AllWindings) {
+    for (auto w : AllWindings3W) {
       if (ratedPower(w) <= 0) {
         SPDLOG_LOGGER_WARN(
             mSLog,
@@ -213,7 +211,7 @@ void SP::Ph1::Transformer3W::createSubComponents() {
 
   // build and create snubbers (DPsim jargon to help simulation stability), 
   // size later in initializeParentFromNodesAndTerminals()
-  for (auto w : AllWindings) {
+  for (auto w : AllWindings3W) {
     const UInt i = idx(w);
     const String tag = windingTag(w);
 
@@ -243,7 +241,7 @@ void SP::Ph1::Transformer3W::initializeParentFromNodesAndTerminals(
     Real frequency) {
   mNominalOmega = 2. * PI * frequency;
 
-  for (auto w : AllWindings)
+  for (auto w : AllWindings3W)
     SPDLOG_LOGGER_INFO(
         mSLog, "Winding {}: R = {} [Ohm], L = {} [H], X = {} [Ohm]",
         windingTag(w), resistance(w), inductance(w),
@@ -251,7 +249,7 @@ void SP::Ph1::Transformer3W::initializeParentFromNodesAndTerminals(
 
   //  Snubber sizing 
   if (mSubSnubResistor[0]) {
-    for (auto w : AllWindings) {
+    for (auto w : AllWindings3W) {
       const UInt i = idx(w);
       const Real pSnub = P_SNUB_TRANSFORMER * ratedPower(w);
       const Real qSnub = Q_SNUB_TRANSFORMER * ratedPower(w);
@@ -285,7 +283,7 @@ void SP::Ph1::Transformer3W::initializeParentFromNodesAndTerminals(
   Complex sumAdmittance = 0;
 
   // calculate and set pre-ideal xfmr voltages
-  for (auto w : AllWindings) {
+  for (auto w : AllWindings3W) {
     const UInt i = idx(w);
     referredVoltage[i] = ratio(w) * initialSingleVoltage(i);
     windingImpedance[i] = {resistance(w), mNominalOmega * inductance(w)};
@@ -302,7 +300,7 @@ void SP::Ph1::Transformer3W::initializeParentFromNodesAndTerminals(
   mVirtualNodes[mVnStar]->setInitialVoltage(starVoltage);
 
   // calculate and set mid-voltages
-  for (auto w : AllWindings) {
+  for (auto w : AllWindings3W) {
     const UInt i = idx(w);
     const Complex branchCurrent = (starVoltage - referredVoltage[i]) / windingImpedance[i];
 
@@ -357,13 +355,13 @@ void SP::Ph1::Transformer3W::calculatePerUnitParameters(Real baseApparentPower,
   SPDLOG_LOGGER_INFO(mSLog, "Base Voltage = {} [V]  Base Impedance = {} [Ohm]",
                      **mBaseVoltage, mBaseImpedance);
 
-  for (auto w : AllWindings){
+  for (auto w : AllWindings3W){
     const UInt i = idx(w); 
     mLeakagePerUnit[i] = Complex{resistance(w) / mBaseImpedance, inductance(w) / mBaseInductance};
     mRatioPerUnit[i] = ratio(w) * nominalVoltage(w) / (**mBaseVoltage); 
   }
 
-  for (auto w : AllWindings)
+  for (auto w : AllWindings3W)
     SPDLOG_LOGGER_INFO(mSLog, "Winding {}: Z = {} [pu], tap = {} [pu]",
                        windingTag(w),
                        Logger::complexToString(mLeakagePerUnit[idx(w)]),
@@ -371,7 +369,7 @@ void SP::Ph1::Transformer3W::calculatePerUnitParameters(Real baseApparentPower,
 
   // Sub-component per-unit values, so their own PF stamps land on the same
   // base as ours
-  for (auto w : AllWindings) {
+  for (auto w : AllWindings3W) {
     const UInt i = idx(w);
     if (mSubSnubResistor[i])
       mSubSnubResistor[i]->calculatePerUnitParameters(mBaseApparentPower);
@@ -427,7 +425,7 @@ void SP::Ph1::Transformer3W::pfApplyAdmittanceMatrixStamp(
   SPDLOG_LOGGER_INFO(mSLog, "#### Y matrix stamping: {}", mY_element);
 
   // apply snubs to the admittance matrix
-  for (auto w : AllWindings) {
+  for (auto w : AllWindings3W) {
     const UInt i = idx(w);
     if (mSubSnubResistor[i])
       mSubSnubResistor[i]->pfApplyAdmittanceMatrixStamp(Y);
@@ -458,7 +456,7 @@ MatrixComp SP::Ph1::Transformer3W::Y_element() { return mY_element; }
 
 void SP::Ph1::Transformer3W::mnaParentInitialize(
     Real omega, Real timeStep, Attribute<Matrix>::Ptr leftVector) {
-  for (auto w : AllWindings)
+  for (auto w : AllWindings3W)
     SPDLOG_LOGGER_INFO(mSLog, "Terminal {} ({}) connected to {:s} = sim node {:d}",
                        idx(w), windingTag(w),
                        mTerminals[idx(w)]->node()->name(),
@@ -501,7 +499,7 @@ void SP::Ph1::Transformer3W::stampIdealTransformer(
 void SP::Ph1::Transformer3W::mnaCompApplySystemMatrixStamp(
     SparseMatrixRow &systemMatrix) {
 
-  for (auto w : AllWindings)
+  for (auto w : AllWindings3W)
     stampIdealTransformer(systemMatrix, w);
 
   for (auto subcomp : mSubComponents)
@@ -539,7 +537,7 @@ void SP::Ph1::Transformer3W::mnaParentPostStep(
 }
 
 void SP::Ph1::Transformer3W::mnaCompUpdateCurrent(const Matrix &leftVector) {
-  for (auto w : AllWindings) {
+  for (auto w : AllWindings3W) {
     const UInt i = idx(w);
     (**mIntfCurrent)(i, 0) = mSubInductor[i]->intfCurrent()(0, 0);
   }
@@ -550,7 +548,7 @@ void SP::Ph1::Transformer3W::mnaCompUpdateVoltage(const Matrix &leftVector) {
   const Complex vStar = Math::complexFromVectorElement(
       leftVector, mVirtualNodes[mVnStar]->matrixNodeIndex());
 
-  for (auto w : AllWindings) {
+  for (auto w : AllWindings3W) {
     const UInt i = idx(w);
     const Complex vOuter =
         isReferenceWinding(w)

@@ -9,6 +9,10 @@ namespace Ph1 {
 
 enum class Winding3W : UInt { Primary = 0, Secondary = 1, Tertiary = 2 };
 
+/// Iteration helper so the winding loops below read as loops 
+inline constexpr std::array<Winding3W, 3> AllWindings3W{
+    {Winding3W::Primary, Winding3W::Secondary, Winding3W::Tertiary}};
+
 // this class holds the  parameters shared by every domain's three-winding xfmr
 // holds Z_p, Z_s, Z_t, and turns ratio and rating per winding
 

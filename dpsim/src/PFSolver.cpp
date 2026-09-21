@@ -33,6 +33,9 @@ void PFSolver::initialize() {
     else if (std::shared_ptr<CPS::SP::Ph1::Transformer> trafo =
                  std::dynamic_pointer_cast<CPS::SP::Ph1::Transformer>(comp))
       mTransformers.push_back(trafo);
+    else if (std::shared_ptr<CPS::SP::Ph1::Transformer3W> xfmr = 
+                  std::dynamic_pointer_cast<CPS::SP::Ph1::Transformer3W>(comp))
+      mTransformers3W.push_back(xfmr); 
     else if (std::shared_ptr<CPS::SP::Ph1::PiLine> line =
                  std::dynamic_pointer_cast<CPS::SP::Ph1::PiLine>(comp))
       mLines.push_back(line);
@@ -135,6 +138,9 @@ void PFSolver::initializeComponents() {
   for (auto trans : mTransformers) {
     trans->calculatePerUnitParameters(mBaseApparentPower, mSystem.mSystemOmega);
   }
+  for (auto xfmr : mTransformers3W){
+    xfmr->calculatePerUnitParameters(mBaseApparentPower, mSystem.mSystemOmega); 
+  }
   for (auto shunt : mShunts) {
     shunt->calculatePerUnitParameters(mBaseApparentPower, mSystem.mSystemOmega);
   }
@@ -159,6 +165,11 @@ void PFSolver::setBaseApparentPower() {
     for (auto trafo : mTransformers)
       if (trafo->attributeTyped<Real>("S")->get() > maxPower)
         maxPower = trafo->attributeTyped<Real>("S")->get();
+  } else if (!mTransformers3W.empty()){
+    for (auto xfmr : mTransformers3W)
+      for (auto w : Base::Ph1::AllWindings3W)
+      if (xfmr->ratedPower(w) > maxPower)
+        maxPower = xfmr->ratedPower(w); 
   }
   if (maxPower != 0.)
     mBaseApparentPower = pow(10, 1 + floor(log10(maxPower)));
@@ -338,6 +349,15 @@ CPS::Real PFSolver::componentBaseVoltage(CPS::TopologicalPowerComp::Ptr comp,
       return trans->getNominalVoltageEnd2();
     return 0;
   }
+  if (auto xfmr = std::dynamic_pointer_cast<CPS::SP::Ph1::Transformer3W>(comp)) {
+    if (xfmr->terminal(0)->node()->name() == node->name())
+      return xfmr->getNominalVoltage(Base::Ph1::Winding3W::Primary);
+    if (xfmr->terminal(1)->node()->name() == node->name())
+      return xfmr->getNominalVoltage(Base::Ph1::Winding3W::Secondary); 
+    if (xfmr->terminal(2)->node()->name() == node->name())
+      return xfmr->getNominalVoltage(Base::Ph1::Winding3W::Tertiary); 
+    return 0; 
+  }
   if (auto gen =
           std::dynamic_pointer_cast<CPS::SP::Ph1::SynchronGenerator>(comp))
     return gen->getBaseVoltage();
@@ -400,6 +420,7 @@ void PFSolver::propagateAndVerifyBaseVoltage() {
       bool isAuthoritative =
           std::dynamic_pointer_cast<CPS::SP::Ph1::SynchronGenerator>(comp) ||
           std::dynamic_pointer_cast<CPS::SP::Ph1::Transformer>(comp) ||
+          std::dynamic_pointer_cast<CPS::SP::Ph1::Transformer3W>(comp) ||
           std::dynamic_pointer_cast<CPS::SP::Ph1::NetworkInjection>(comp) ||
           std::dynamic_pointer_cast<CPS::SP::Ph1::AvVoltageSourceInverterDQ>(
               comp);
@@ -569,11 +590,14 @@ void PFSolver::composeAdmittanceMatrix() {
       }
       trans->pfApplyAdmittanceMatrixStamp(mY);
     }
+    for (auto xfmr : mTransformers3W){
+      xfmr->pfApplyAdmittanceMatrixStamp(mY); 
+    }
     for (auto shunt : mShunts) {
       shunt->pfApplyAdmittanceMatrixStamp(mY);
     }
   }
-  if (mLines.empty() && mTransformers.empty()) {
+  if (mLines.empty() && mTransformers.empty() && mTransformers3W.empty()) {
     throw std::invalid_argument("There are no bus");
   }
 }

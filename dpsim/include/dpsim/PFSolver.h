@@ -77,8 +77,9 @@ protected:
 
   /// System list
   CPS::SystemTopology mSystem;
-  /// Vector of transformer components
+  /// Vectors of transformer components
   std::vector<std::shared_ptr<CPS::SP::Ph1::Transformer>> mTransformers;
+  std::vector<std::shared_ptr<CPS::SP::Ph1::Transformer3W>> mTransformers3W; 
   /// Vector of solid state transformer components
   std::vector<std::shared_ptr<CPS::SP::Ph1::SolidStateTransformer>>
       mSolidStateTransformers;

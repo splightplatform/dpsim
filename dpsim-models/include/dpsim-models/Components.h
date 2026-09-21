@@ -33,6 +33,7 @@
 #include <dpsim-models/SP/SP_Ph1_SynchronGenerator6bOrderVBR.h>
 #include <dpsim-models/SP/SP_Ph1_SynchronGeneratorTrStab.h>
 #include <dpsim-models/SP/SP_Ph1_Transformer.h>
+#include <dpsim-models/SP/SP_Ph1_Transformer3W.h>
 #include <dpsim-models/SP/SP_Ph1_VDNode.h>
 #include <dpsim-models/SP/SP_Ph1_VoltageSource.h>
 #include <dpsim-models/SP/SP_Ph1_VoltageSourceInverter.h>

@@ -133,6 +133,7 @@ list(APPEND MODELS_SOURCES
 	EMT/EMT_Ph3_RXLoad.cpp
 	EMT/EMT_Ph3_NetworkInjection.cpp
 	EMT/EMT_Ph3_Transformer.cpp
+	EMT/EMT_Ph3_Transformer3W.cpp
 	EMT/EMT_Ph3_Shunt.cpp
 	EMT/EMT_Ph3_Switch.cpp
 	EMT/EMT_Ph3_ReducedOrderSynchronGeneratorVBR.cpp

@@ -277,9 +277,8 @@ template <typename VarType> void MnaSolver<VarType>::initializeSystem() {
 
   // just a sanity check in case we change the static
   // initialization of the switch number in the future
-  if (mSwitches.size() > sizeof(std::size_t) * 8) {
+  if ((mFrequencyParallel || !mSystemMatrixRecomputationEnabled) && mSwitches.size() > SWITCH_NUM)
     throw SystemError("Too many Switches.");
-  }
 
   if (mFrequencyParallel)
     initializeSystemWithParallelFrequencies();

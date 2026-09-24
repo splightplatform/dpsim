@@ -144,7 +144,21 @@ void EMT::Ph3::Transformer3W::connectWinding(Winding w) {
   if (mWithResistiveLosses) {
     mSubResistor[i] = std::make_shared<EMT::Ph3::Resistor>(
         **mUID + "_res_" + tag, **mName + "_res_" + tag, Logger::Level::off);
-    mSubResistor[i]->setParameters(resistance(w));
+
+    constexpr Real MIN_WINDING_RESISTANCE = 1e-3; // [Ohm]
+    Matrix res = resistance(w);
+    for (UInt p = 0; p < 3; p++) {
+      if (std::abs(res(p, p)) < DOUBLE_EPSILON) {
+        SPDLOG_LOGGER_WARN(
+            mSLog,
+            "Transformer3W {}: winding {} phase {} resistance is "
+            "effectively zero; flooring to {} Ohm to avoid a singular "
+            "resistor stamp (1/R -> Inf/NaN).",
+            this->name(), tag, p, MIN_WINDING_RESISTANCE);
+        res(p, p) = MIN_WINDING_RESISTANCE;
+      }
+    }
+    mSubResistor[i]->setParameters(res);
     addMNASubComponent(mSubResistor[i],
                        MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT,
                        MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT, true);
@@ -228,14 +242,6 @@ void EMT::Ph3::Transformer3W::createSubComponents() {
                        MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT,
                        MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT, true);
   }
-
-  // Diagnostic: star point -> GND, testing whether the star point is
-  mSubSnubResistorStar = std::make_shared<EMT::Ph3::Resistor>(
-      **mName + "_snub_res_star", mLogLevel);
-  mSubSnubResistorStar->connect({mVirtualNodes[mVnStar], EMT::SimNode::GND});
-  addMNASubComponent(mSubSnubResistorStar,
-                     MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT,
-                     MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT, true);
 }
 
 void EMT::Ph3::Transformer3W::initializeParentFromNodesAndTerminals(
@@ -290,18 +296,6 @@ void EMT::Ph3::Transformer3W::initializeParentFromNodesAndTerminals(
                          windingTag(w), node(i)->name(),
                          Logger::matrixToString(mSnubberCapacitance[i]));
     }
-
-    // Diagnostic star-point snubber. Sized off the reference winding's
-    // rating
-    const Real pSnubStar = P_SNUB_TRANSFORMER * ratedPower(mReferenceWinding);
-    const Real vNomStar = nominalVoltage(mReferenceWinding);
-    const Real snubberResistanceStar =
-        std::pow(std::abs(vNomStar), 2) / pSnubStar;
-    mSnubberResistanceStar =
-        Math::singlePhaseParameterToThreePhase(snubberResistanceStar);
-    mSubSnubResistorStar->setParameters(mSnubberResistanceStar);
-    SPDLOG_LOGGER_INFO(mSLog, "Snubber resistance at star point = {} [Ohm]",
-                       Logger::matrixToString(mSnubberResistanceStar));
   }
 
   std::array<MatrixComp, NumWindings> referredVoltage; // 3x1 vector (3ph) for each winding
@@ -430,20 +424,6 @@ void EMT::Ph3::Transformer3W::mnaParentInitialize(
         "Winding {}: snubber Geq = {} [S], snubGeq/branchGeq = {} "
         "(near 0 means the snubber is negligible next to the branch)",
         windingTag(w), Logger::matrixToString(snubGeq), ratio);
-  }
-
-  // Diagnostic: same comparison for the star point
-  if (mSubSnubResistorStar) {
-    const Matrix starSnubGeq = mSnubberResistanceStar.inverse();
-    SPDLOG_LOGGER_INFO(mSLog, "Star point: snubber Geq = {} [S]",
-                       Logger::matrixToString(starSnubGeq));
-    for (auto w : AllWindings3W) {
-      const Matrix branchGeq = timeStep / 2. * inductance(w).inverse();
-      const Real ratio = starSnubGeq(0, 0) / branchGeq(0, 0);
-      SPDLOG_LOGGER_INFO(
-          mSLog, "Star point: starSnubGeq/branchGeq[{}] = {}",
-          windingTag(w), ratio);
-    }
   }
 }
 

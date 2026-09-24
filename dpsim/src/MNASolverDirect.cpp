@@ -148,8 +148,11 @@ void MnaSolverDirect<VarType>::recomputeSystemMatrix(Real time) {
   // Refactorization of matrix assuming that structure remained
   // constant by omitting analyzePattern
   auto start = std::chrono::steady_clock::now();
-  mDirectLinearSolverVariableSystemMatrix->partialRefactorize(
-      mVariableSystemMatrix, mListVariableSystemMatrixEntries);
+  // mDirectLinearSolverVariableSystemMatrix->partialRefactorize(
+  //     mVariableSystemMatrix, mListVariableSystemMatrixEntries);
+  mDirectLinearSolverVariableSystemMatrix->factorize(
+    mVariableSystemMatrix
+  );
   auto end = std::chrono::steady_clock::now();
   std::chrono::duration<Real> diff = end - start;
   mRecomputationTimes.push_back(diff.count());
@@ -182,7 +185,7 @@ template <> void MnaSolverDirect<Real>::createEmptySystemMatrix() {
   } else {
     if (mSwitches.size() > SWITCH_NUM)
       throw SystemError("Too many Switches.");
-      
+
     for (std::size_t i = 0; i < (1ULL << mSwitches.size()); i++) {
       auto bit = std::bitset<SWITCH_NUM>(i);
       mSwitchedMatrices[bit].push_back(

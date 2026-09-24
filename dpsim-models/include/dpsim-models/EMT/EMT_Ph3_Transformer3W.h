@@ -39,14 +39,6 @@ private:
   std::array<Matrix, NumWindings> mSnubberCapacitance{
       {Matrix::Zero(3, 3), Matrix::Zero(3, 3), Matrix::Zero(3, 3)}};
 
-  // Diagnostic star-point snubber (resistor only), star point -> GND.
-  // Sized off the reference winding's rating -- the star point has no
-  // rated power/nominal voltage of its own -- as a rough first pass while
-  // testing whether the star point is underdamped. See "Interface Matrix
-  // Shape Bug" artifact's sibling investigation for context.
-  std::shared_ptr<EMT::Ph3::Resistor> mSubSnubResistorStar;
-  Matrix mSnubberResistanceStar{Matrix::Zero(3, 3)};
-
   //virtual nodes
   UInt mVnStar = 0;
   std::array<UInt, NumWindings> mVnMid{{UNUSED_VN, UNUSED_VN, UNUSED_VN}};

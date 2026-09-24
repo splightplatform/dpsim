@@ -148,11 +148,8 @@ void MnaSolverDirect<VarType>::recomputeSystemMatrix(Real time) {
   // Refactorization of matrix assuming that structure remained
   // constant by omitting analyzePattern
   auto start = std::chrono::steady_clock::now();
-  // mDirectLinearSolverVariableSystemMatrix->partialRefactorize(
-  //     mVariableSystemMatrix, mListVariableSystemMatrixEntries);
-  mDirectLinearSolverVariableSystemMatrix->factorize(
-    mVariableSystemMatrix
-  );
+  mDirectLinearSolverVariableSystemMatrix->partialRefactorize(
+      mVariableSystemMatrix, mListVariableSystemMatrixEntries);
   auto end = std::chrono::steady_clock::now();
   std::chrono::duration<Real> diff = end - start;
   mRecomputationTimes.push_back(diff.count());

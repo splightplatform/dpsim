@@ -232,7 +232,20 @@ void EMT::Ph3::Transformer3W::createSubComponents() {
 
 void EMT::Ph3::Transformer3W::initializeParentFromNodesAndTerminals(
     Real frequency) {
-  
+
+  /* WORKAROUND SimPowerComp<Real>::initialize(), called earlier via
+  SystemTopology::addComponent(), unconditionally resizes mIntfVoltage/
+  mIntfCurrent to (3, mNumFreqs) -- (3, 1) for a normal single-frequency
+  run
+  This breakes the (3, NumWindings) shape set in the constructor
+  This class uses columns to mean "winding," not "frequency" like the
+  base class assumes
+  To fix a memory error I'm re-establishing the real shape here, since nothing
+  re-triggers initialize() after this point 
+  TODO: a more permanent fix is need in the future. I've noted it */
+  **mIntfVoltage = Matrix::Zero(3, NumWindings);
+  **mIntfCurrent = Matrix::Zero(3, NumWindings);
+
   Real mNominalOmega = 2. * PI * frequency;
 
   for (auto w : AllWindings3W)

@@ -53,13 +53,29 @@ void EMT::Ph3::PiLine::createSubComponents() {
                      MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT,
                      MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT, false);
 
-  mSubSeriesInductor =
+  if ((**mSeriesInd)(0,0) >= 0){
+    mSubSeriesInductor =
       std::make_shared<EMT::Ph3::Inductor>(**mName + "_ind", mLogLevel);
-  mSubSeriesInductor->setParameters(**mSeriesInd);
-  mSubSeriesInductor->connect({mVirtualNodes[0], mTerminals[1]->node()});
-  addMNASubComponent(mSubSeriesInductor,
-                     MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT,
-                     MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT, true);
+    mSubSeriesInductor->setParameters(**mSeriesInd);
+    mSubSeriesInductor->connect({mVirtualNodes[0], mTerminals[1]->node()});
+    addMNASubComponent(mSubSeriesInductor,
+                      MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT,
+                      MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT, true);
+    mSubSeriesElement = mSubSeriesInductor;
+    mSubSeriesTearElement = mSubSeriesInductor;
+  } else {
+    mSubSeriesCapacitor =
+      std::make_shared<EMT::Ph3::Capacitor>(**mName + "_cap", mLogLevel);
+    Real omega = 2. * PI * mFrequencies(0, 0);
+    Matrix capacitance = -1. / (omega * omega) * (**mSeriesInd).inverse();
+    mSubSeriesCapacitor->setParameters(capacitance);
+    mSubSeriesCapacitor->connect({mVirtualNodes[0], mTerminals[1]->node()});
+    addMNASubComponent(mSubSeriesCapacitor,
+                      MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT,
+                      MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT, true);
+    mSubSeriesElement = mSubSeriesCapacitor;
+    mSubSeriesTearElement = mSubSeriesCapacitor;
+  }
 
   // Create parallel sub components
   mSubParallelResistor0 =
@@ -218,7 +234,7 @@ void EMT::Ph3::PiLine::mnaCompUpdateVoltage(const Matrix &leftVector) {
 }
 
 void EMT::Ph3::PiLine::mnaCompUpdateCurrent(const Matrix &leftVector) {
-  **mIntfCurrent = mSubSeriesInductor->intfCurrent();
+  **mIntfCurrent = mSubSeriesElement->intfCurrent();
 }
 
 // #### Tear Methods ####
@@ -239,21 +255,21 @@ MNAInterface::List EMT::Ph3::PiLine::mnaTearGroundComponents() {
 void EMT::Ph3::PiLine::mnaTearInitialize(Real omega, Real timeStep) {
   mSubSeriesResistor->mnaTearSetIdx(mTearIdx);
   mSubSeriesResistor->mnaTearInitialize(omega, timeStep);
-  mSubSeriesInductor->mnaTearSetIdx(mTearIdx);
-  mSubSeriesInductor->mnaTearInitialize(omega, timeStep);
+  mSubSeriesTearElement->mnaTearSetIdx(mTearIdx);
+  mSubSeriesTearElement->mnaTearInitialize(omega, timeStep);
 }
 
 void EMT::Ph3::PiLine::mnaTearApplyMatrixStamp(SparseMatrixRow &tearMatrix) {
   mSubSeriesResistor->mnaTearApplyMatrixStamp(tearMatrix);
-  mSubSeriesInductor->mnaTearApplyMatrixStamp(tearMatrix);
+  mSubSeriesTearElement->mnaTearApplyMatrixStamp(tearMatrix);
 }
 
 void EMT::Ph3::PiLine::mnaTearApplyVoltageStamp(Matrix &voltageVector) {
-  mSubSeriesInductor->mnaTearApplyVoltageStamp(voltageVector);
+  mSubSeriesTearElement->mnaTearApplyVoltageStamp(voltageVector);
 }
 
 void EMT::Ph3::PiLine::mnaTearPostStep(MatrixComp voltage, MatrixComp current) {
-  mSubSeriesInductor->mnaTearPostStep(voltage - (**mSeriesRes * current),
-                                      current);
-  (**mIntfCurrent) = mSubSeriesInductor->intfCurrent();
+  mSubSeriesTearElement->mnaTearPostStep(voltage - (**mSeriesRes * current),
+                                         current);
+  (**mIntfCurrent) = mSubSeriesElement->intfCurrent();
 }

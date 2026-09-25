@@ -166,3 +166,36 @@ void EMT::Ph3::Capacitor::mnaCompUpdateCurrent(const Matrix &leftVector) {
   SPDLOG_LOGGER_DEBUG(mSLog, "\nCurrent: {:s}",
                       Logger::matrixToString(**mIntfCurrent));
 }
+
+// Tear Methods 
+void EMT::Ph3::Capacitor::mnaTearInitialize(Real omega, Real timeStep) {
+  updateMatrixNodeIndices();
+  mEquivCond = (2.0 * **mCapacitance) / timeStep;
+  mEquivCurrent = -**mIntfCurrent + -mEquivCond * **mIntfVoltage;
+}
+
+void EMT::Ph3::Capacitor::mnaTearApplyMatrixStamp(SparseMatrixRow &tearMatrix) {
+  // Set diagonal entries
+  Math::addToMatrixElement(tearMatrix, mTearIdx * 3, mTearIdx * 3,
+                           1. / mEquivCond(0, 0));
+  Math::addToMatrixElement(tearMatrix, mTearIdx * 3 + 1, mTearIdx * 3 + 1,
+                           1. / mEquivCond(1, 1));
+  Math::addToMatrixElement(tearMatrix, mTearIdx * 3 + 2, mTearIdx * 3 + 2,
+                           1. / mEquivCond(2, 2));
+}
+
+void EMT::Ph3::Capacitor::mnaTearApplyVoltageStamp(Matrix &voltageVector) {
+  mEquivCurrent = -**mIntfCurrent + -mEquivCond * **mIntfVoltage;
+  Math::addToVectorElement(voltageVector, mTearIdx * 3,
+                           mEquivCurrent(0, 0) / mEquivCond(0, 0));
+  Math::addToVectorElement(voltageVector, mTearIdx * 3 + 1,
+                           mEquivCurrent(1, 0) / mEquivCond(1, 1));
+  Math::addToVectorElement(voltageVector, mTearIdx * 3 + 2,
+                           mEquivCurrent(2, 0) / mEquivCond(2, 2));
+}
+
+void EMT::Ph3::Capacitor::mnaTearPostStep(MatrixComp voltage,
+                                          MatrixComp current) {
+  (**mIntfVoltage) = voltage.real();
+  (**mIntfCurrent) = (mEquivCond * voltage).real() + mEquivCurrent;
+}

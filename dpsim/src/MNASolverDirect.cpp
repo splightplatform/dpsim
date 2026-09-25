@@ -173,8 +173,6 @@ void MnaSolverDirect<VarType>::extractStateSpace(Real time) {
 }
 
 template <> void MnaSolverDirect<Real>::createEmptySystemMatrix() {
-  if (!mSystemMatrixRecomputationEnabled && mSwitches.size() >= SWITCH_NUM)
-    throw SystemError("Too many Switches.");
 
   if (mSystemMatrixRecomputationEnabled) {
     mBaseSystemMatrix =
@@ -182,6 +180,9 @@ template <> void MnaSolverDirect<Real>::createEmptySystemMatrix() {
     mVariableSystemMatrix =
         SparseMatrix(mNumMatrixNodeIndices, mNumMatrixNodeIndices);
   } else {
+    if (mSwitches.size() > SWITCH_NUM)
+      throw SystemError("Too many Switches.");
+
     for (std::size_t i = 0; i < (1ULL << mSwitches.size()); i++) {
       auto bit = std::bitset<SWITCH_NUM>(i);
       mSwitchedMatrices[bit].push_back(
@@ -193,8 +194,7 @@ template <> void MnaSolverDirect<Real>::createEmptySystemMatrix() {
 }
 
 template <> void MnaSolverDirect<Complex>::createEmptySystemMatrix() {
-  if ((mFrequencyParallel || !mSystemMatrixRecomputationEnabled) &&
-      mSwitches.size() >= SWITCH_NUM)
+  if ((mFrequencyParallel || !mSystemMatrixRecomputationEnabled) && mSwitches.size() > SWITCH_NUM)
     throw SystemError("Too many Switches.");
 
   if (mFrequencyParallel) {

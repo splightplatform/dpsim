@@ -24,9 +24,7 @@ protected:
   // Nominal (rated) voltage of each winding [V], indexed by Winding3W
   std::array<Real, NumWindings> mNominalVoltage{{0., 0., 0.}};
 
-  // Winding the star-point impedances are referred to. Every Z_i, and the
-  // star point's own voltage level is expressed on this windings side
-  // Resolved in resolveReferenceWinding()
+  // Winding the star-point impedances are referred to
   Winding3W mReferenceWinding = Winding3W::Primary;
 
   // True once setReferenceWinding() is called
@@ -117,7 +115,7 @@ public:
   }
 
   // Force the reference winding instead of taking the highest-nominal-voltage
-  // default. Call before setParameters()
+  // default
   void setReferenceWinding(Winding3W w) {
     mReferenceWinding = w;
     mReferenceWindingSet = true;

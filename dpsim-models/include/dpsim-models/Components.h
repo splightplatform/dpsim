@@ -184,6 +184,7 @@
 #include <dpsim-models/EMT/EMT_Ph3_SynchronGeneratorTrStab.h>
 #include <dpsim-models/EMT/EMT_Ph3_SynchronGeneratorVBR.h>
 #include <dpsim-models/EMT/EMT_Ph3_Transformer.h>
+#include <dpsim-models/EMT/EMT_Ph3_Transformer3W.h>
 #include <dpsim-models/EMT/EMT_Ph3_TwoTerminalVTypeVariableSSNComp.h>
 #include <dpsim-models/EMT/EMT_Ph3_VSIVoltageControlVCO.h>
 

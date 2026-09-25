@@ -5,7 +5,6 @@ using namespace CPS;
 
 using Winding = CPS::Base::Ph1::Winding3W;
 using CPS::Base::Ph1::AllWindings3W;
-
 namespace {
 
 /// Short tag used in sub-component names and log lines
@@ -304,7 +303,10 @@ void SP::Ph1::Transformer3W::initializeParentFromNodesAndTerminals(
     const UInt i = idx(w);
     const Complex branchCurrent = (starVoltage - referredVoltage[i]) / windingImpedance[i];
 
+    // no midpoint node if not using resistors 
     if (mWithResistiveLosses) {
+      // if reference winding the voltage winding to midpoint is over inductor
+      // else its over the resistor 
       const Complex compImpedance =
           isReferenceWinding(w) ? Complex(0, mNominalOmega * inductance(w))
                                 : resistance(w);
@@ -317,7 +319,7 @@ void SP::Ph1::Transformer3W::initializeParentFromNodesAndTerminals(
         isReferenceWinding(w) ? initialSingleVoltage(i) : referredVoltage[i];
     (**mIntfVoltage)(i, 0) = outerVoltage - starVoltage;
     (**mIntfCurrent)(i, 0) =
-        isReferenceWinding(w) ? -branchCurrent : branchCurrent; // DPsim convention
+        isReferenceWinding(w) ? -branchCurrent : branchCurrent;
   }
 
   SPDLOG_LOGGER_INFO(mSLog,

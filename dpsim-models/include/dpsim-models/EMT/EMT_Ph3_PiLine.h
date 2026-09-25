@@ -30,6 +30,11 @@ protected:
   /// True after createSubComponents() runs; prevents double-construction.
   /// Series Inductance submodel
   std::shared_ptr<Inductor> mSubSeriesInductor;
+  /// Series Capacitance submodel
+  std::shared_ptr<Capacitor> mSubSeriesCapacitor;
+  /// either mSubSeriesInductor or mSubSeriesCapacitor 
+  SimPowerComp<Real>::Ptr mSubSeriesElement;
+  std::shared_ptr<MNATearInterface> mSubSeriesTearElement;
   /// Series Resistor submodel
   std::shared_ptr<Resistor> mSubSeriesResistor;
   /// Parallel Resistor submodel at Terminal 0

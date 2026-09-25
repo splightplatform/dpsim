@@ -15,14 +15,14 @@ using CPS::Base::Ph1::AllWindings3W;
 // How a winding is physically connected to its three line terminals.
 //
 // Wye:   the star-equivalent topology SP::Ph1::Transformer3W already
-//        implements
+//        implements (phase shift encoded in turns ratio for PF)
 // Delta: three legs (AB, BC, CA) each span two of
 //        this winding's own terminals, and terminal currents are the
 //        superposition of two leg currents. This creates a phase shift
 //        in EMT
 //
 // phaseShift [deg] is only meaningful when connection == Delta 
-// it selects which two lines a given leg bridges and with what polarity.
+// it selects which two lines a given leg bridges and with what polarity
 
 enum class WindingConnection { Wye, Delta };
 
@@ -44,7 +44,7 @@ protected:
       {WindingConnection::Wye, WindingConnection::Wye,
        WindingConnection::Wye}};
   // Phase shift [deg] relative to the reference winding
-  // use when corresponding winding's connection is Delta.
+  // use when corresponding winding's connection is Delta
   std::array<Real, NumWindings> mPhaseShift{{0., 0., 0.}};
 
   // Star-branch (wye) or leg (delta) resistance/inductance of each winding,

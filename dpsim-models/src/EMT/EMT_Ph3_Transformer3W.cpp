@@ -191,8 +191,7 @@ void EMT::Ph3::Transformer3W::createSubComponents() {
   mSubCompCreated = true;
 
   resolveReferenceWinding();
-  assignVirtualNodeSlots(); // throws until Phase 3.0 topology is derived
-
+  assignVirtualNodeSlots(); 
   for (auto w : AllWindings3W)
     connectWinding(w);
 
@@ -333,16 +332,10 @@ void EMT::Ph3::Transformer3W::initializeParentFromNodesAndTerminals(
   const MatrixComp starVoltage = sumAdmittance.inverse() * sumCurrent;
   mVirtualNodes[mVnStar]->setInitialVoltage(starVoltage);
 
-  SPDLOG_LOGGER_INFO(mSLog, "Star point initial voltage (3ph):\n{:s}",
-                     Logger::matrixCompToString(starVoltage));
-
   // calculate and set midpoint voltages
   for (auto w : AllWindings3W){
     const UInt i = idx(w);
     const MatrixComp branchCurrent = windingImpedance[i].inverse() * (starVoltage - referredVoltage[i]);
-
-    SPDLOG_LOGGER_INFO(mSLog, "Winding {}: branch current (3ph):\n{:s}",
-                       windingTag(w), Logger::matrixCompToString(branchCurrent));
 
     // no midpoint node if not using resistors
     if (mWithResistiveLosses) {
@@ -353,29 +346,20 @@ void EMT::Ph3::Transformer3W::initializeParentFromNodesAndTerminals(
                               : MatrixComp(resistance(w).cast<Complex>());
       const MatrixComp midVoltage = starVoltage - (compImpedance * branchCurrent);
       mVirtualNodes[mVnMid[i]]->setInitialVoltage(midVoltage);
-
-      SPDLOG_LOGGER_INFO(mSLog, "Winding {}: midpoint initial voltage (3ph):\n{:s}",
-                         windingTag(w), Logger::matrixCompToString(midVoltage));
     }
 
     // seed MNA current and voltages
-    MatrixComp outerVoltage = MatrixComp::Zero(3,1); 
-    Complex outerVoltageA = isReferenceWinding(w) ? initialSingleVoltage(i) : referredVoltage[i](0,0); 
-    outerVoltage(0,0) = outerVoltageA; 
-    outerVoltage(1,0) = outerVoltageA * SHIFT_TO_PHASE_B; 
-    outerVoltage(2,0) = outerVoltageA * SHIFT_TO_PHASE_C; 
+    MatrixComp outerVoltage = MatrixComp::Zero(3,1);
+    Complex outerVoltageA = isReferenceWinding(w) ? initialSingleVoltage(i) : referredVoltage[i](0,0);
+    outerVoltage(0,0) = outerVoltageA;
+    outerVoltage(1,0) = outerVoltageA * SHIFT_TO_PHASE_B;
+    outerVoltage(2,0) = outerVoltageA * SHIFT_TO_PHASE_C;
 
     for (auto &[phase_idx, phase] : phaseMap){
-      (**mIntfVoltage)(phase_idx, i) = RMS3PH_TO_PEAK1PH * (outerVoltage(phase_idx,0) - starVoltage(phase_idx)).real(); 
+      (**mIntfVoltage)(phase_idx, i) = RMS3PH_TO_PEAK1PH * (outerVoltage(phase_idx,0) - starVoltage(phase_idx)).real();
       (**mIntfCurrent)(phase_idx, i) = RMS3PH_TO_PEAK1PH * (isReferenceWinding(w) ? -branchCurrent(phase_idx).real() :
                                       branchCurrent(phase_idx).real());
     }
-
-    SPDLOG_LOGGER_INFO(mSLog,
-                       "Winding {}: seeded intfVoltage = {:s}, intfCurrent = {:s}",
-                       windingTag(w),
-                       Logger::matrixToString((**mIntfVoltage).col(i)),
-                       Logger::matrixToString((**mIntfCurrent).col(i)));
   }
 
   SPDLOG_LOGGER_INFO(mSLog,
@@ -394,6 +378,7 @@ void EMT::Ph3::Transformer3W::initializeParentFromNodesAndTerminals(
 void EMT::Ph3::Transformer3W::mnaParentInitialize(
     Real omega, Real timeStep, Attribute<Matrix>::Ptr leftVector) {
   (void)omega;
+  (void)timeStep;
   (void)leftVector;
   for (auto w : AllWindings3W)
     SPDLOG_LOGGER_INFO(mSLog,
@@ -401,30 +386,6 @@ void EMT::Ph3::Transformer3W::mnaParentInitialize(
                        idx(w), windingTag(w),
                        mTerminals[idx(w)]->node()->name(),
                        mTerminals[idx(w)]->node()->matrixNodeIndex());
-
-  // Diagnostic: is the terminal snubber actually providing meaningful
-  // damping relative to the branch's own trapezoidal conductance, or is it
-  // negligible next to it?
-  for (auto w : AllWindings3W) {
-    const UInt i = idx(w);
-    const Matrix branchGeq = timeStep / 2. * inductance(w).inverse();
-    SPDLOG_LOGGER_INFO(mSLog, "Winding {}: branch Geq (timeStep/2 * L^-1) = {} [S]",
-                       windingTag(w), Logger::matrixToString(branchGeq));
-
-    if (!mSubSnubResistor[i]) {
-      SPDLOG_LOGGER_INFO(mSLog, "Winding {}: snubbers disabled, no comparison",
-                         windingTag(w));
-      continue;
-    }
-
-    const Matrix snubGeq = mSnubberResistance[i].inverse();
-    const Real ratio = snubGeq(0, 0) / branchGeq(0, 0);
-    SPDLOG_LOGGER_INFO(
-        mSLog,
-        "Winding {}: snubber Geq = {} [S], snubGeq/branchGeq = {} "
-        "(near 0 means the snubber is negligible next to the branch)",
-        windingTag(w), Logger::matrixToString(snubGeq), ratio);
-  }
 }
 
 void EMT::Ph3::Transformer3W::stampIdealTransformer(

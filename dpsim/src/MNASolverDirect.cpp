@@ -152,14 +152,10 @@ template <typename VarType>
 void MnaSolverDirect<VarType>::recomputeSystemMatrix(Real time) {
   // Start from base matrix
   mVariableSystemMatrix = mBaseSystemMatrix;
-  const auto nnzBefore = mVariableSystemMatrix.nonZeros(); // TEMP
 
   // Now stamp variable elements and switches into matrix
   for (auto comp : mMNAIntfVariableComps)
     comp->mnaApplySystemMatrixStamp(mVariableSystemMatrix);
-
-  SPDLOG_LOGGER_INFO(mSLog, "TEMP recompute: nnz {} -> {}", nnzBefore,
-                     mVariableSystemMatrix.nonZeros()); // TEMP
 
   // Refactorization of matrix assuming that structure remained
   // constant by omitting analyzePattern

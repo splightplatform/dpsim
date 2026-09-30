@@ -401,6 +401,7 @@ void MnaSolver<VarType>::initializeStateSpaceExtractor() {
 template <typename VarType>
 Bool MnaSolver<VarType>::hasVariableComponentChanged() {
   Bool changed = false; 
+  // we intentially removed the early-out to ensure we update every switch status
   for (auto varElem : mVariableComps) {
     if (varElem->hasParameterChanged()) {
       auto idObj = std::dynamic_pointer_cast<IdentifiedObject>(varElem);

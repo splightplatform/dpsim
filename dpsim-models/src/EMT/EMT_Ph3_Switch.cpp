@@ -54,6 +54,8 @@ void EMT::Ph3::Switch::mnaCompInitialize(Real omega, Real timeStep,
                                          Attribute<Matrix>::Ptr leftVector) {
   updateMatrixNodeIndices();
   **mRightVector = Matrix::Zero(0, 0);
+  // set switch state so its not recomputed in step 1
+  mIsClosedPrev = mnaIsClosed();
 }
 
 Bool EMT::Ph3::Switch::mnaIsClosed() { return **mIsClosed; }

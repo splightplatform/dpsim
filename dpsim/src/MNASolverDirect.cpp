@@ -77,9 +77,11 @@ void MnaSolverDirect<VarType>::stampVariableSystemMatrix() {
   mBaseSystemMatrix.setZero();
   for (auto statElem : mMNAComponents)
     statElem->mnaApplySystemMatrixStamp(mBaseSystemMatrix);
-  SPDLOG_LOGGER_INFO(mSLog, "Base matrix with only static elements: {}",
-                     Logger::matrixToString(mBaseSystemMatrix));
-  mSLog->flush();
+  if (mSLog->should_log(spdlog::level::debug)) {
+    mSLog->debug("Base matrix with only static elements: {}",
+                 Logger::matrixToString(mBaseSystemMatrix));
+    mSLog->flush();
+  }
 
   // Continue from base matrix
   mVariableSystemMatrix = mBaseSystemMatrix;
@@ -89,10 +91,12 @@ void MnaSolverDirect<VarType>::stampVariableSystemMatrix() {
   for (auto varElem : mMNAIntfVariableComps)
     varElem->mnaApplySystemMatrixStamp(mVariableSystemMatrix);
 
-  SPDLOG_LOGGER_INFO(mSLog, "Initial system matrix with variable elements {}",
-                     Logger::matrixToString(mVariableSystemMatrix));
-  /* TODO: find replacement for flush() */
-  mSLog->flush();
+  if (mSLog->should_log(spdlog::level::debug)) {
+    mSLog->debug("Initial system matrix with variable elements {}",
+                 Logger::matrixToString(mVariableSystemMatrix));
+    /* TODO: find replacement for flush() */
+    mSLog->flush();
+  }
 
   // Calculate factorization of current matrix
   mDirectLinearSolverVariableSystemMatrix->preprocessing(
@@ -357,6 +361,9 @@ void MnaSolverDirect<VarType>::solveWithHarmonics(Real time, Int timeStepCount,
 }
 
 template <typename VarType> void MnaSolverDirect<VarType>::logSystemMatrices() {
+  if (!mSLog->should_log(spdlog::level::debug))
+    return;
+
   if (mFrequencyParallel) {
     for (UInt i = 0; i < mSwitchedMatrices[std::bitset<SWITCH_NUM>(0)].size();
          ++i) {

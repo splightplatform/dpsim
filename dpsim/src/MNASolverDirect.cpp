@@ -91,6 +91,14 @@ void MnaSolverDirect<VarType>::stampVariableSystemMatrix() {
   for (auto varElem : mMNAIntfVariableComps)
     varElem->mnaApplySystemMatrixStamp(mVariableSystemMatrix);
 
+  // Rebuild the base matrix with zeros at the entries only variable elements stamp
+  // recomputeSystemMatrix starts from a copy that already holds every entry, so re-stamping
+  // the switches never updates indexes in the sparse matrix.
+  mBaseSystemMatrix = mVariableSystemMatrix;
+  mBaseSystemMatrix.coeffs().setZero(); // zero the values, keep the pattern
+  for (auto statElem : mMNAComponents)
+    statElem->mnaApplySystemMatrixStamp(mBaseSystemMatrix);
+
   if (mSLog->should_log(spdlog::level::debug)) {
     mSLog->debug("Initial system matrix with variable elements {}",
                  Logger::matrixToString(mVariableSystemMatrix));
@@ -144,10 +152,14 @@ template <typename VarType>
 void MnaSolverDirect<VarType>::recomputeSystemMatrix(Real time) {
   // Start from base matrix
   mVariableSystemMatrix = mBaseSystemMatrix;
+  const auto nnzBefore = mVariableSystemMatrix.nonZeros(); // TEMP
 
   // Now stamp variable elements and switches into matrix
   for (auto comp : mMNAIntfVariableComps)
     comp->mnaApplySystemMatrixStamp(mVariableSystemMatrix);
+
+  SPDLOG_LOGGER_INFO(mSLog, "TEMP recompute: nnz {} -> {}", nnzBefore,
+                     mVariableSystemMatrix.nonZeros()); // TEMP
 
   // Refactorization of matrix assuming that structure remained
   // constant by omitting analyzePattern

@@ -400,16 +400,17 @@ void MnaSolver<VarType>::initializeStateSpaceExtractor() {
 
 template <typename VarType>
 Bool MnaSolver<VarType>::hasVariableComponentChanged() {
+  bool changed = false; 
   for (auto varElem : mVariableComps) {
     if (varElem->hasParameterChanged()) {
       auto idObj = std::dynamic_pointer_cast<IdentifiedObject>(varElem);
       SPDLOG_LOGGER_DEBUG(
           mSLog, "Component ({:s} {:s}) value changed -> Update System Matrix",
           idObj->type(), idObj->name());
-      return true;
+      changed = true
     }
   }
-  return false;
+  return changed;
 }
 
 template <typename VarType> void MnaSolver<VarType>::updateSwitchStatus() {

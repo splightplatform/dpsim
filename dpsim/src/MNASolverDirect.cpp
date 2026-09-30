@@ -362,7 +362,7 @@ void MnaSolverDirect<VarType>::solveWithHarmonics(Real time, Int timeStepCount,
 
 template <typename VarType> void MnaSolverDirect<VarType>::logSystemMatrices() {
   if (!mSLog->should_log(spdlog::level::debug))
-    return; 
+    return;
 
   if (mFrequencyParallel) {
     for (UInt i = 0; i < mSwitchedMatrices[std::bitset<SWITCH_NUM>(0)].size();

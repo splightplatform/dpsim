@@ -68,5 +68,7 @@ public:
   virtual const Task::List &mnaTasks() const = 0;
   // Return right vector attribute
   virtual Attribute<Matrix>::Ptr getRightVector() const = 0;
+  /// rows of the right vector thsi component can write to 
+  virtual const std::vector<UInt> &getRightVectorRows() const = 0; 
 };
 } // namespace CPS

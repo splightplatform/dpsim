@@ -103,6 +103,7 @@ public:
 
   const Task::List &mnaTasks() const final;
   Attribute<Matrix>::Ptr getRightVector() const final;
+  const std::vector<UInt> &getRightVectorRows() const final; 
 
   class MnaPreStep : public CPS::Task {
   public:

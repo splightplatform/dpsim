@@ -17,6 +17,11 @@ Attribute<Matrix>::Ptr MNASimPowerComp<VarType>::getRightVector() const {
 }
 
 template <typename VarType>
+const std::vector<UInt> &MNASimPowerComp<VarType>::getRightVectorRows() const {
+  return mRightVectorRows;
+}
+
+template <typename VarType>
 void MNASimPowerComp<VarType>::mnaInitialize(Real omega, Real timeStep) {
   mMnaTasks.clear();
 }

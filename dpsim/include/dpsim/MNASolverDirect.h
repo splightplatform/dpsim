@@ -95,6 +95,7 @@ protected:
   using MnaSolver<VarType>::mLeftSideVector;
   using MnaSolver<VarType>::mCurrentSwitchStatus;
   using MnaSolver<VarType>::mRightVectorStamps;
+  using MnaSolver<VarType>::mRightVectorStampRows; 
   using MnaSolver<VarType>::mNumNetNodes;
   using MnaSolver<VarType>::mNodes;
   using MnaSolver<VarType>::mIsInInitialization;
@@ -166,6 +167,9 @@ protected:
   /// Returns a pointer to an object of type DirectLinearSolver
   std::shared_ptr<DirectLinearSolver>
   createDirectSolverImplementation(CPS::Logger::Log mSLog);
+
+  // Adds each component's right vector stamp into the solver's mRightSideVector
+  void accumulateRightVectorStamps(); 
 
 public:
   /// Constructor should not be called by users but by Simulation

@@ -202,6 +202,7 @@ template <> void MnaSolver<Real>::initializeComponents() {
     const Matrix &stamp = comp->getRightVector()->get();
     if (stamp.size() != 0) {
       mRightVectorStamps.push_back(&stamp);
+      mRightVectorStampRows.push_back(&comp->getRightVectorRows()); 
     }
   }
 
@@ -244,8 +245,10 @@ template <> void MnaSolver<Complex>::initializeComponents() {
       comp->mnaInitializeHarm(mSystem.mSystemOmega, mTimeStep,
                               mLeftSideVectorHarm);
       const Matrix &stamp = comp->getRightVector()->get();
-      if (stamp.size() != 0)
+      if (stamp.size() != 0){
         mRightVectorStamps.push_back(&stamp);
+        mRightVectorStampRows.push_back(&comp->getRightVectorRows()); 
+      }
     }
     // Initialize nodes
     for (UInt nodeIdx = 0; nodeIdx < mNodes.size(); ++nodeIdx) {
@@ -258,6 +261,7 @@ template <> void MnaSolver<Complex>::initializeComponents() {
       const Matrix &stamp = comp->getRightVector()->get();
       if (stamp.size() != 0) {
         mRightVectorStamps.push_back(&stamp);
+        mRightVectorStampRows.push_back(&comp->getRightVectorRows()); 
       }
     }
 

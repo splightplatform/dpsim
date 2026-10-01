@@ -84,6 +84,9 @@ protected:
   Matrix mRightSideVector;
   /// List of all right side vector contributions
   std::vector<const Matrix *> mRightVectorStamps;
+  /// the rows a components contribution can be non-zero in
+  /// (parallel to mRightVectorStamps)
+  std::vector<const std::vector<UInt> *> mRightVectorStampRows; 
 
   // #### MNA specific attributes related to harmonics / additional frequencies ####
   /// Source vector of known quantities

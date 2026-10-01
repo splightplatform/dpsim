@@ -22,8 +22,9 @@ public:
   using List = std::vector<Ptr>;
 
   /// This component's contribution ("stamp") to the right-side vector.
-  /// TODO performance improvements from a sparse representation, at least during copying / summation?
   Attribute<Matrix>::Ptr mRightVector;
+  /// rows of mRightVector this component or subcomponents can write 
+  std::vector<UInt> mRightVectorRows; 
 
   /// List of tasks that relate to using MNA for this component (usually pre-step and/or post-step)
   Task::List mMnaTasks;

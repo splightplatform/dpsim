@@ -28,7 +28,7 @@ void CompositePowerComp<VarType>::addMNASubComponent(
     this->mSubcomponentsMNA.push_back(mnasubcomp);
 
     if (contributeToRightVector) {
-      this->mRightVectorStamps.push_back(mnasubcomp->mRightVector);
+      this->mRightVectorSubcomps.push_back(mnasubcomp); 
     }
 
     switch (preStepOrder) {
@@ -68,6 +68,12 @@ void CompositePowerComp<VarType>::mnaCompInitialize(
   }
 
   **this->mRightVector = Matrix::Zero(leftVector->get().rows(), 1);
+  // for every MNA subcomponent (w/ R vector contribution)
+  // add the subcomponents R vector rows to parent's list
+  for (auto &sub : mRightVectorSubcomps)
+    this->mRightVectorRows.insert(this->mRightVectorRows.end(), 
+                                  sub->mRightVectorRows.begin(), 
+                                  sub->mRightVectorRows.end()); 
 
   mnaParentInitialize(omega, timeStep, leftVector);
 }
@@ -84,11 +90,15 @@ void CompositePowerComp<VarType>::mnaCompApplySystemMatrixStamp(
 template <typename VarType>
 void CompositePowerComp<VarType>::mnaCompApplyRightSideVectorStamp(
     Matrix &rightVector) {
-  rightVector.setZero();
-  for (auto stamp : mRightVectorStamps) {
-    if ((**stamp).size() != 0) {
-      rightVector += **stamp;
-    }
+  // clear the composite's sums from last step only at rows that matter
+  for (UInt r : this->mRightVectorRows)
+    rightVector(r, 0) = 0; 
+  
+  // accumlate the contribution from each subcomponent's RightVectorRows
+  for (auto &sub : mRightVectorSubcomps){ 
+    const Matrix &stamp = **sub->mRightVector; 
+    for (UInt r : sub->mRightVectorRows)
+      rightVector(r, 0) += stamp(r, 0); 
   }
   mnaParentApplyRightSideVectorStamp(rightVector);
 }

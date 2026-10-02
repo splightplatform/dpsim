@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <dpsim-models/MNASimPowerComp.h>
+#include <algorithm>
+#include <type_traits> 
 
 using namespace CPS;
 
@@ -15,6 +17,11 @@ Attribute<Matrix>::Ptr MNASimPowerComp<VarType>::getRightVector() const {
 }
 
 template <typename VarType>
+const std::vector<UInt> &MNASimPowerComp<VarType>::getRightVectorRows() const {
+  return mRightVectorRows;
+}
+
+template <typename VarType>
 void MNASimPowerComp<VarType>::mnaInitialize(Real omega, Real timeStep) {
   mMnaTasks.clear();
 }
@@ -23,6 +30,7 @@ template <typename VarType>
 void MNASimPowerComp<VarType>::mnaInitialize(
     Real omega, Real timeStep, Attribute<Matrix>::Ptr leftVector) {
   mMnaTasks.clear();
+  mRightVectorRows.clear(); 
   **this->mRightVector = Matrix::Zero(leftVector->get().rows(), 1);
 
   if (mHasPreStep) {
@@ -36,6 +44,41 @@ void MNASimPowerComp<VarType>::mnaInitialize(
   }
 
   this->mnaCompInitialize(omega, timeStep, leftVector);
+
+  // create mRightVectorRows
+  if ((**mRightVector).size() == 0) {
+    mRightVectorRows.clear(); 
+  } else {
+    size_t firstOwnRow = mRightVectorRows.size(); 
+
+    // collect the rows of non-grounded terminals
+    for (UInt i = 0; i < this->mNumTerminals; i++) { 
+      if (this->terminalNotGrounded(i)){
+        for (UInt r : this->matrixNodeIndices(i))
+          mRightVectorRows.push_back(r); 
+      }
+    }
+    // collec the rows of virtual nodes
+    for (UInt i = 0; i < this->virtualNodesNumber(); i++){
+      for (UInt r : this->virtualMatrixNodeIndices(i))
+        mRightVectorRows.push_back(r); 
+    }
+
+    // for complex components (DP/SP), each value occupies two rows: 
+    // real part at r and imag part at r + rows/2
+    // we must track both row values 
+    if constexpr (std::is_same_v<VarType, Complex>) {
+      UInt complexOffset = (**mRightVector).rows() / 2; 
+      size_t n = mRightVectorRows.size(); 
+      for (size_t k = firstOwnRow; k < n; k++)
+        mRightVectorRows.push_back(mRightVectorRows[k] + complexOffset);
+    }
+
+    //sort and dedup the list
+    std::sort(mRightVectorRows.begin(), mRightVectorRows.end()); 
+    mRightVectorRows.erase(
+        std::unique(mRightVectorRows.begin(), mRightVectorRows.end()), mRightVectorRows.end()); 
+  }
 }
 
 template <typename VarType>

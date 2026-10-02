@@ -3,6 +3,7 @@
 #pragma once
 
 #include <dpsim-models/MNASimPowerComp.h>
+#include <vector>
 
 namespace CPS {
 enum class MNA_SUBCOMP_TASK_ORDER {
@@ -22,7 +23,7 @@ private:
   MNAInterface::List mSubcomponentsPostStepBeforeParent;
   MNAInterface::List mSubcomponentsPostStepAfterParent;
 
-  std::vector<CPS::Attribute<Matrix>::Ptr> mRightVectorStamps;
+  std::vector<std::shared_ptr<MNASimPowerComp<VarType>>> mRightVectorSubcomps; 
 
 protected:
   /// Guards createSubComponents() against double-execution; set it to true at

@@ -91,6 +91,14 @@ void MnaSolverDirect<VarType>::stampVariableSystemMatrix() {
   for (auto varElem : mMNAIntfVariableComps)
     varElem->mnaApplySystemMatrixStamp(mVariableSystemMatrix);
 
+  // Rebuild the base matrix with zeros at the entries only variable elements stamp
+  // recomputeSystemMatrix starts from a copy that already holds every entry, so re-stamping
+  // the switches never updates indexes in the sparse matrix.
+  mBaseSystemMatrix = mVariableSystemMatrix;
+  mBaseSystemMatrix.coeffs().setZero(); // zero the values, keep the pattern
+  for (auto statElem : mMNAComponents)
+    statElem->mnaApplySystemMatrixStamp(mBaseSystemMatrix);
+
   if (mSLog->should_log(spdlog::level::debug)) {
     mSLog->debug("Initial system matrix with variable elements {}",
                  Logger::matrixToString(mVariableSystemMatrix));
@@ -109,6 +117,20 @@ void MnaSolverDirect<VarType>::stampVariableSystemMatrix() {
   mFactorizeTimes.push_back(diff.count());
 }
 
+// builds the solver's R vector by adding the contribution from each
+// top-level component's R vector (visiting only relevant rows)
+template <typename VarType>
+void MnaSolverDirect<VarType>::accumulateRightVectorStamps() {
+  // get each components R stamp
+  for (size_t i = 0; i < mRightVectorStamps.size(); i++){
+    const Matrix &stamp = *mRightVectorStamps[i]; 
+    // iterate over that components rows
+    for (UInt r : *mRightVectorStampRows[i])
+      // stamping in each relevant row
+      mRightSideVector(r, 0) += stamp(r, 0); 
+  }
+}
+
 template <typename VarType>
 void MnaSolverDirect<VarType>::solveWithSystemMatrixRecomputation(
     Real time, Int timeStepCount) {
@@ -117,8 +139,8 @@ void MnaSolverDirect<VarType>::solveWithSystemMatrixRecomputation(
 
   // Add together the right side vector (computed by the components'
   // pre-step tasks)
-  for (auto stamp : mRightVectorStamps)
-    mRightSideVector += *stamp;
+  accumulateRightVectorStamps(); 
+  
 
   // Get switch and variable comp status and update system matrix and lu factorization accordingly
   mVariableComponentChanged = hasVariableComponentChanged();
@@ -263,8 +285,7 @@ void MnaSolverDirect<VarType>::solve(Real time, Int timeStepCount) {
   mRightSideVector.setZero();
 
   // Add together the right side vector (computed by the components' pre-step tasks)
-  for (auto stamp : mRightVectorStamps)
-    mRightSideVector += *stamp;
+  accumulateRightVectorStamps(); 
 
   if (!mIsInInitialization)
     MnaSolver<VarType>::updateSwitchStatus();
@@ -316,8 +337,7 @@ void MnaSolverDirect<VarType>::solve(Real time, Int timeStepCount) {
           syncGen->correctorStep();
 
         // Add together the right side vector (computed by the components' pre-step tasks)
-        for (auto stamp : mRightVectorStamps)
-          mRightSideVector += *stamp;
+        accumulateRightVectorStamps(); 
 
         if (mSwitchedMatrices.size() > 0) {
           auto start = std::chrono::steady_clock::now();

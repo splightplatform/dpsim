@@ -138,6 +138,8 @@ template <typename VarType> void Simulation::createSolvers() {
     pfSolver->setEnforceReactiveLimits(**mPFEnforceReactiveLimits);
     pfSolver->setBaseVoltageLooseTolerance(**mPFBaseVoltageLooseTolerance);
     pfSolver->setBaseVoltageStrictTolerance(**mPFBaseVoltageStrictTolerance);
+    pfSolver->setProgressCallback(mPFProgressCallback);
+
 
     solver = pfSolver;
 
@@ -399,6 +401,13 @@ void Simulation::setPFSolverBaseVoltageStrictTolerance(Real tolerance) {
 
 Real Simulation::getPFSolverBaseVoltageStrictTolerance() const {
   return **mPFBaseVoltageStrictTolerance;
+}
+
+std::shared_ptr<PFSolver> Simulation::getPFSolver() const {
+  for (const auto &solver : mSolvers)
+    if (auto pf = std::dynamic_pointer_cast<PFSolver>(solver))
+      return pf;
+  throw std::logic_error("Simulation::getPFSolver(): no power-flow solver");
 }
 
 void Simulation::start() {

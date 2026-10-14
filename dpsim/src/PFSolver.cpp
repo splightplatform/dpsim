@@ -21,6 +21,17 @@ PFSolver::PFSolver(CPS::String name, CPS::SystemTopology system,
   mTimeStep = timeStep;
 }
 
+// progress helper
+void PFSolver::reportProgress(const CPS::String &phase, CPS::UInt iteration) {
+  if (!mProgressCallback)
+    return;
+  const bool empty = mF.size() == 0;
+  mProgressCallback({phase, iteration, mTotalIterations + iteration,
+                     empty ? 0.0 : mF.cwiseAbs().maxCoeff(),
+                     empty ? 0.0 : mF.norm()});
+}
+
+
 void PFSolver::initialize() {
   SPDLOG_LOGGER_INFO(mSLog, "#### INITIALIZATION OF POWERFLOW SOLVER ");
   for (auto comp : mSystem.mComponents) {
@@ -314,6 +325,11 @@ void PFSolver::rebuildBusIndexAggregates() {
                          mPQBusIndices.end());
   mPQPVBusIndices.insert(mPQPVBusIndices.end(), mPVBusIndices.begin(),
                          mPVBusIndices.end());
+  
+  // build reverse lookup table whenever bus aggregate updates 
+  mPQPVPositionOfBus.assign(mSystem.mNodes.size(), -1);
+  for (UInt a = 0; a < mPQPVBusIndices.size(); ++a)
+    mPQPVPositionOfBus[mPQPVBusIndices[a]] = a;
 }
 
 void PFSolver::resetToOriginalClassification() {
@@ -596,6 +612,8 @@ void PFSolver::composeAdmittanceMatrix() {
     for (auto shunt : mShunts) {
       shunt->pfApplyAdmittanceMatrixStamp(mY);
     }
+    // compress mY so walks are faster in storage
+    mY.makeCompressed(); 
   }
   if (mLines.empty() && mTransformers.empty() && mTransformers3W.empty()) {
     throw std::invalid_argument("There are no bus");
@@ -630,6 +648,7 @@ Bool PFSolver::runNewtonRaphson(const CPS::String &label) {
 
   // Calculate the mismatch according to the initial solution
   calculateMismatch();
+  reportProgress(label, 0); 
 
   // Check whether model already converged
   isConverged = checkConvergence();
@@ -649,6 +668,8 @@ Bool PFSolver::runNewtonRaphson(const CPS::String &label) {
 
     SPDLOG_LOGGER_INFO(mSLog, "iter {} max|mismatch|={} norm={}",
                    i, mF.cwiseAbs().maxCoeff(), mF.norm());
+    
+    reportProgress(label, i); 
 
     SPDLOG_LOGGER_DEBUG(mSLog, "Mismatch vector at iteration {}: \n {}", i, mF);
     mSLog->flush();
@@ -657,12 +678,16 @@ Bool PFSolver::runNewtonRaphson(const CPS::String &label) {
     isConverged = checkConvergence();
     mIterations = i;
   }
+  mTotalIterations += mIterations;
   SPDLOG_LOGGER_INFO(mSLog, "<<< runNewtonRaphson end [{}] converged={} iters={}",
                      label, isConverged, mIterations);
   return isConverged;
 }
 
 Bool PFSolver::solvePowerflow() {
+  mTotalIterations = 0;
+  // cleared below by any outer loop that gives up or is skipped
+  mOuterLoopsSettled = true;
   Bool converged = runNewtonRaphson("initial");
 
   if (!mEnforceReactiveLimits && mRegulatedBusOfGen.empty())
@@ -680,6 +705,9 @@ Bool PFSolver::solvePowerflow() {
       converged = runNewtonRaphson("Q-limit outer loop");
     }
 
+    if (!settled)
+      mOuterLoopsSettled = false;
+
     if (converged && !settled) {
       // Unsettled PV/PQ classification must not look converged to setSolution().
       SPDLOG_LOGGER_WARN(
@@ -692,11 +720,16 @@ Bool PFSolver::solvePowerflow() {
     }
   }
 
-  if (!converged && !mRegulatedBusOfGen.empty())
+  if (!converged && !mRegulatedBusOfGen.empty()) {
     SPDLOG_LOGGER_WARN(mSLog, "Skipping remote-bus regulation: base solve (with Q-limits) did not converge");
+    mOuterLoopsSettled = false;
+  }
 
-  if (converged && !mRegulatedBusOfGen.empty())
+  if (converged && !mRegulatedBusOfGen.empty()) {
     converged = resolveRemoteRegulation();
+    if (!converged)
+      mOuterLoopsSettled = false;
+  }
 
   return converged;
 }

@@ -16,11 +16,25 @@
 #include "dpsim-models/SystemTopology.h"
 #include <dpsim/Scheduler.h>
 #include <dpsim/Solver.h>
+#include <functional>
 
 namespace DPsim {
+/// Snapshot passed to the progress callback after each mismatch evaluation
+struct PFProgress {
+  CPS::String phase;          // label of the current Newton run
+  CPS::UInt iteration;        // within this run; 0 = before the first step
+  CPS::UInt totalIterations;  // across the whole solve
+  CPS::Real maxMismatch;      // max |mismatch|, per unit
+  CPS::Real mismatchNorm;     // 2-norm of the mismatch, per unit
+};
+
+using PFProgressCallback = std::function<void(const PFProgress &)>;
 /// Solver class using the nonlinear powerflow (PF) formulation.
 class PFSolver : public Solver {
 protected:
+  PFProgressCallback mProgressCallback;
+  void reportProgress(const CPS::String &phase, CPS::UInt iteration);
+
   // Levenberg-Marquardt regularization for the Newton-Raphson solve
   Real mLmLambda = 1e-3;
   UInt mStagnantIterations = 0;
@@ -64,6 +78,8 @@ protected:
   std::vector<CPS::UInt> mVDBusIndices;
   /// Vector with indices of both PQ and PV buses
   std::vector<CPS::UInt> mPQPVBusIndices;
+  /// Position of each bus in mPQPVBusIndices for reverse lookup, -1 for VD buses
+  std::vector<Int> mPQPVPositionOfBus; 
 
   /// Admittance matrix
   CPS::SparseMatrixCompRow mY;
@@ -104,8 +120,13 @@ protected:
   Real mTolerance = 1e-8;
   /// Maximum number of iterations
   CPS::UInt mMaxIterations = 20;
-  /// Actual number of iterations
-  CPS::UInt mIterations;
+  /// Actual number of iterations of the last Newton-Raphson run
+  CPS::UInt mIterations = 0;
+  /// Newton-Raphson iterations summed over every run of the last solve
+  CPS::UInt mTotalIterations = 0;
+  /// Whether the Q-limit and remote-regulation outer loops of the last solve
+  /// reached their fixed point (true when neither loop is enabled)
+  CPS::Bool mOuterLoopsSettled = false;
   /// Enforce generator reactive-power limits via PV<->PQ outer-loop switching
   CPS::Bool mEnforceReactiveLimits = false;
   /// Maximum number of Q-limit outer iterations
@@ -195,6 +216,29 @@ protected:
   CPS::Task::List getTasks() override;
   // determines power flow bus type for each node according to the components attached to it.
 public:
+  void setProgressCallback(PFProgressCallback cb) { mProgressCallback = std::move(cb); }
+  // Accessors for more observability during load-flow solved
+  /// Whether the last Newton-Raphson run converged
+  CPS::Bool getConverged() const { return isConverged; }
+  /// Iterations of the last Newton-Raphson run
+  CPS::UInt getIterations() const { return mIterations; }
+  /// Iterations summed over every Newton-Raphson run of the last solve,
+  /// including the Q-limit and remote-regulation outer loops
+  CPS::UInt getTotalIterations() const { return mTotalIterations; }
+  /// Whether the Q-limit and remote-regulation outer loops of the last solve
+  /// settled; false if either gave up or was skipped
+  CPS::Bool getOuterLoopsSettled() const { return mOuterLoopsSettled; }
+  /// Per-unit bus admittance matrix, indexed by matrixNodeIndex()
+  const CPS::SparseMatrixCompRow &getAdmittanceMatrix() const { return mY; }
+  /// Base power of the per-unit system [VA]
+  CPS::Real getBaseApparentPower() const { return mBaseApparentPower; }
+  /// Base voltage the solver assigned to a node [V]
+  CPS::Real getBaseVoltageAtNode(const CPS::TopologicalNode::Ptr &node) const {
+    auto it = mBaseVoltageAtNode.find(node);
+    if (it == mBaseVoltageAtNode.end())
+      throw std::out_of_range("No base voltage for node " + node->name());
+    return it->second;
+  }
   /// Constructor to be used in simulation examples.
   PFSolver(CPS::String name, CPS::SystemTopology system, Real timeStep,
            CPS::Logger::Level logLevel);

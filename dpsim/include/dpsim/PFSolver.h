@@ -106,8 +106,13 @@ protected:
   Real mTolerance = 1e-8;
   /// Maximum number of iterations
   CPS::UInt mMaxIterations = 20;
-  /// Actual number of iterations
-  CPS::UInt mIterations;
+  /// Actual number of iterations of the last Newton-Raphson run
+  CPS::UInt mIterations = 0;
+  /// Newton-Raphson iterations summed over every run of the last solve
+  CPS::UInt mTotalIterations = 0;
+  /// Whether the Q-limit and remote-regulation outer loops of the last solve
+  /// reached their fixed point (true when neither loop is enabled)
+  CPS::Bool mOuterLoopsSettled = false;
   /// Enforce generator reactive-power limits via PV<->PQ outer-loop switching
   CPS::Bool mEnforceReactiveLimits = false;
   /// Maximum number of Q-limit outer iterations
@@ -197,6 +202,28 @@ protected:
   CPS::Task::List getTasks() override;
   // determines power flow bus type for each node according to the components attached to it.
 public:
+  // Accessors for more observability during load-flow solved
+  /// Whether the last Newton-Raphson run converged
+  CPS::Bool getConverged() const { return isConverged; }
+  /// Iterations of the last Newton-Raphson run
+  CPS::UInt getIterations() const { return mIterations; }
+  /// Iterations summed over every Newton-Raphson run of the last solve,
+  /// including the Q-limit and remote-regulation outer loops
+  CPS::UInt getTotalIterations() const { return mTotalIterations; }
+  /// Whether the Q-limit and remote-regulation outer loops of the last solve
+  /// settled; false if either gave up or was skipped
+  CPS::Bool getOuterLoopsSettled() const { return mOuterLoopsSettled; }
+  /// Per-unit bus admittance matrix, indexed by matrixNodeIndex()
+  const CPS::SparseMatrixCompRow &getAdmittanceMatrix() const { return mY; }
+  /// Base power of the per-unit system [VA]
+  CPS::Real getBaseApparentPower() const { return mBaseApparentPower; }
+  /// Base voltage the solver assigned to a node [V]
+  CPS::Real getBaseVoltageAtNode(const CPS::TopologicalNode::Ptr &node) const {
+    auto it = mBaseVoltageAtNode.find(node);
+    if (it == mBaseVoltageAtNode.end())
+      throw std::out_of_range("No base voltage for node " + node->name());
+    return it->second;
+  }
   /// Constructor to be used in simulation examples.
   PFSolver(CPS::String name, CPS::SystemTopology system, Real timeStep,
            CPS::Logger::Level logLevel);

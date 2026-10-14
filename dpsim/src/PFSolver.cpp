@@ -664,12 +664,16 @@ Bool PFSolver::runNewtonRaphson(const CPS::String &label) {
     isConverged = checkConvergence();
     mIterations = i;
   }
+  mTotalIterations += mIterations;
   SPDLOG_LOGGER_INFO(mSLog, "<<< runNewtonRaphson end [{}] converged={} iters={}",
                      label, isConverged, mIterations);
   return isConverged;
 }
 
 Bool PFSolver::solvePowerflow() {
+  mTotalIterations = 0;
+  // cleared below by any outer loop that gives up or is skipped
+  mOuterLoopsSettled = true;
   Bool converged = runNewtonRaphson("initial");
 
   if (!mEnforceReactiveLimits && mRegulatedBusOfGen.empty())
@@ -687,6 +691,9 @@ Bool PFSolver::solvePowerflow() {
       converged = runNewtonRaphson("Q-limit outer loop");
     }
 
+    if (!settled)
+      mOuterLoopsSettled = false;
+
     if (converged && !settled) {
       // Unsettled PV/PQ classification must not look converged to setSolution().
       SPDLOG_LOGGER_WARN(
@@ -699,11 +706,16 @@ Bool PFSolver::solvePowerflow() {
     }
   }
 
-  if (!converged && !mRegulatedBusOfGen.empty())
+  if (!converged && !mRegulatedBusOfGen.empty()) {
     SPDLOG_LOGGER_WARN(mSLog, "Skipping remote-bus regulation: base solve (with Q-limits) did not converge");
+    mOuterLoopsSettled = false;
+  }
 
-  if (converged && !mRegulatedBusOfGen.empty())
+  if (converged && !mRegulatedBusOfGen.empty()) {
     converged = resolveRemoteRegulation();
+    if (!converged)
+      mOuterLoopsSettled = false;
+  }
 
   return converged;
 }

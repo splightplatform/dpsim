@@ -401,6 +401,13 @@ Real Simulation::getPFSolverBaseVoltageStrictTolerance() const {
   return **mPFBaseVoltageStrictTolerance;
 }
 
+std::shared_ptr<PFSolver> Simulation::getPFSolver() const {
+  for (const auto &solver : mSolvers)
+    if (auto pf = std::dynamic_pointer_cast<PFSolver>(solver))
+      return pf;
+  throw std::logic_error("Simulation::getPFSolver(): no power-flow solver");
+}
+
 void Simulation::start() {
   SPDLOG_LOGGER_INFO(mLog, "Initialize simulation: {}", **mName);
   if (!mInitialized)

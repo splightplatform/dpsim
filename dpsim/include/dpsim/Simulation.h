@@ -24,6 +24,7 @@
 namespace DPsim {
 /// Forward declaration of CommandLineArgs from Utils
 class CommandLineArgs;
+class PFSolver;
 
 /// \brief The Simulation holds a SystemTopology and a Solver.
 ///
@@ -291,6 +292,9 @@ public:
   void setPFSolverBaseVoltageStrictTolerance(Real tolerance);
 
   Real getPFSolverBaseVoltageStrictTolerance() const;
+
+  /// The power-flow solver created by initialize(); throws if there is none
+  std::shared_ptr<PFSolver> getPFSolver() const;
 
   // #### Simulation Control ####
   /// Create solver instances etc.

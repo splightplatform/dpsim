@@ -16,11 +16,25 @@
 #include "dpsim-models/SystemTopology.h"
 #include <dpsim/Scheduler.h>
 #include <dpsim/Solver.h>
+#include <functional>
 
 namespace DPsim {
+/// Snapshot passed to the progress callback after each mismatch evaluation
+struct PFProgress {
+  CPS::String phase;          // label of the current Newton run
+  CPS::UInt iteration;        // within this run; 0 = before the first step
+  CPS::UInt totalIterations;  // across the whole solve
+  CPS::Real maxMismatch;      // max |mismatch|, per unit
+  CPS::Real mismatchNorm;     // 2-norm of the mismatch, per unit
+};
+
+using PFProgressCallback = std::function<void(const PFProgress &)>;
 /// Solver class using the nonlinear powerflow (PF) formulation.
 class PFSolver : public Solver {
 protected:
+  PFProgressCallback mProgressCallback;
+  void reportProgress(const CPS::String &phase, CPS::UInt iteration);
+
   // Levenberg-Marquardt regularization for the Newton-Raphson solve
   Real mLmLambda = 1e-3;
   UInt mStagnantIterations = 0;
@@ -202,6 +216,7 @@ protected:
   CPS::Task::List getTasks() override;
   // determines power flow bus type for each node according to the components attached to it.
 public:
+  void setProgressCallback(PFProgressCallback cb) { mProgressCallback = std::move(cb); }
   // Accessors for more observability during load-flow solved
   /// Whether the last Newton-Raphson run converged
   CPS::Bool getConverged() const { return isConverged; }

@@ -16,6 +16,7 @@
 #include <dpsim/Interface.h>
 #include <dpsim/Scheduler.h>
 #include <dpsim/Solver.h>
+#include <functional>
 
 #ifdef WITH_GRAPHVIZ
 #include <dpsim-models/Graph.h>
@@ -25,6 +26,7 @@ namespace DPsim {
 /// Forward declaration of CommandLineArgs from Utils
 class CommandLineArgs;
 class PFSolver;
+struct PFProgress; 
 
 /// \brief The Simulation holds a SystemTopology and a Solver.
 ///
@@ -111,6 +113,8 @@ protected:
   Solver::Behaviour mSolverBehaviour = Solver::Behaviour::Simulation;
   ///
   Solver::List mSolvers;
+  /// Called by the power-flow solver after each mismatch evaluation
+  std::function<void(const PFProgress &)> mPFProgressCallback;
   ///
   DirectLinearSolverImpl mDirectImpl = DirectLinearSolverImpl::Undef;
   ///
@@ -200,6 +204,9 @@ public:
   ///
   void setSolverType(Solver::Type solverType = Solver::Type::MNA) {
     mSolverType = solverType;
+  }
+  void setPFProgressCallback(std::function<void(const PFProgress &)> cb) {
+    mPFProgressCallback = std::move(cb);
   }
   /// set solver and component to initialization or simulation behaviour
   void setSolverAndComponentBehaviour(Solver::Behaviour behaviour) {

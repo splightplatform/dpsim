@@ -138,6 +138,8 @@ template <typename VarType> void Simulation::createSolvers() {
     pfSolver->setEnforceReactiveLimits(**mPFEnforceReactiveLimits);
     pfSolver->setBaseVoltageLooseTolerance(**mPFBaseVoltageLooseTolerance);
     pfSolver->setBaseVoltageStrictTolerance(**mPFBaseVoltageStrictTolerance);
+    pfSolver->setProgressCallback(mPFProgressCallback);
+
 
     solver = pfSolver;
 

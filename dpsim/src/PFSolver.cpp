@@ -21,6 +21,17 @@ PFSolver::PFSolver(CPS::String name, CPS::SystemTopology system,
   mTimeStep = timeStep;
 }
 
+// progress helper
+void PFSolver::reportProgress(const CPS::String &phase, CPS::UInt iteration) {
+  if (!mProgressCallback)
+    return;
+  const bool empty = mF.size() == 0;
+  mProgressCallback({phase, iteration, mTotalIterations + iteration,
+                     empty ? 0.0 : mF.cwiseAbs().maxCoeff(),
+                     empty ? 0.0 : mF.norm()});
+}
+
+
 void PFSolver::initialize() {
   SPDLOG_LOGGER_INFO(mSLog, "#### INITIALIZATION OF POWERFLOW SOLVER ");
   for (auto comp : mSystem.mComponents) {
@@ -637,6 +648,7 @@ Bool PFSolver::runNewtonRaphson(const CPS::String &label) {
 
   // Calculate the mismatch according to the initial solution
   calculateMismatch();
+  reportProgress(label, 0); 
 
   // Check whether model already converged
   isConverged = checkConvergence();
@@ -656,6 +668,8 @@ Bool PFSolver::runNewtonRaphson(const CPS::String &label) {
 
     SPDLOG_LOGGER_INFO(mSLog, "iter {} max|mismatch|={} norm={}",
                    i, mF.cwiseAbs().maxCoeff(), mF.norm());
+    
+    reportProgress(label, i); 
 
     SPDLOG_LOGGER_DEBUG(mSLog, "Mismatch vector at iteration {}: \n {}", i, mF);
     mSLog->flush();

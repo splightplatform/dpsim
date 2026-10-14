@@ -19,42 +19,47 @@ PFSolverPowerPolarSparse::PFSolverPowerPolarSparse(
     CPS::Logger::Level logLevel)
     : PFSolverPowerPolar(name, system, timeStep, logLevel) {}
 
-bool PFSolverPowerPolarSparse::isConnected(UInt k, UInt j) {
-  return G(k, j) != 0.0 || B(k, j) != 0.0;
-}
-
 void PFSolverPowerPolarSparse::buildJacobianPattern() {
+  /* 
+  This function just creates the entries of the Jacobian matrix
+  We are now using the reverse lookup table instead of scanning
+  the whole array looking for connection
+  */
   UInt npqpv = mNumPQBuses + mNumPVBuses;
   std::vector<Eigen::Triplet<Real>> triplets;
+  triplets.reserve(4 * mY.nonZeros());
 
-  // Pattern mirrors the bus admittance sparsity; off-diagonal entries exist only
-  // between connected buses. Blocks: J1 dTheta/dTheta, J2 dTheta/dV, J3 dQ/dTheta,
-  // J4 dQ/dV (V increments only for PQ buses).
+  // Rows: P at a, Q at a + npqpv (PQ only).
+  // Cols: theta at b, V at b + npqpv (PQ only)
+  // Every stored entry of row k of mY is a connection to bus k.
   for (UInt a = 0; a < npqpv; ++a) {
-    UInt k = mPQPVBusIndices[a];
-    triplets.emplace_back(a, a, 0.0); // J1 diagonal
-    if (a < mNumPQBuses)
-      triplets.emplace_back(a, a + npqpv, 0.0); // J2 diagonal
-    for (UInt b = 0; b < npqpv; ++b) {          // J1 off-diagonal
-      if (b != a && isConnected(k, mPQPVBusIndices[b]))
-        triplets.emplace_back(a, b, 0.0);
+    const UInt k = mPQPVBusIndices[a];
+    const bool kIsPQ = a < mNumPQBuses;
+
+    // diagonals: bus k's own rows and columns
+    triplets.emplace_back(a, a, 0.0);
+    if (kIsPQ) {
+      triplets.emplace_back(a, a + npqpv, 0.0);
+      triplets.emplace_back(a + npqpv, a, 0.0);
+      triplets.emplace_back(a + npqpv, a + npqpv, 0.0);
     }
-    for (UInt b = 0; b < mNumPQBuses; ++b) { // J2 off-diagonal
-      if (b != a && isConnected(k, mPQPVBusIndices[b]))
-        triplets.emplace_back(a, b + npqpv, 0.0);
-    }
-  }
-  for (UInt a = 0; a < mNumPQBuses; ++a) {
-    UInt k = mPQPVBusIndices[a];
-    triplets.emplace_back(a + npqpv, a, 0.0);         // J3 diagonal
-    triplets.emplace_back(a + npqpv, a + npqpv, 0.0); // J4 diagonal
-    for (UInt b = 0; b < npqpv; ++b) {                // J3 off-diagonal
-      if (b != a && isConnected(k, mPQPVBusIndices[b]))
-        triplets.emplace_back(a + npqpv, b, 0.0);
-    }
-    for (UInt b = 0; b < mNumPQBuses; ++b) { // J4 off-diagonal
-      if (b != a && isConnected(k, mPQPVBusIndices[b]))
-        triplets.emplace_back(a + npqpv, b + npqpv, 0.0);
+
+    // off-diagonals: one set per neighbour j
+    // use inner-iterator to find connected
+    for (CPS::SparseMatrixCompRow::InnerIterator it(mY, k); it; ++it) {
+      const UInt j = static_cast<UInt>(it.col());
+      const Int b = mPQPVPositionOfBus[j];
+      if (j == k || b < 0) // diagonal handled above & slack has no column
+        continue;
+      const bool jIsPQ = static_cast<UInt>(b) < mNumPQBuses;
+
+      triplets.emplace_back(a, b, 0.0); // J1
+      if (jIsPQ)
+        triplets.emplace_back(a, b + npqpv, 0.0); // J2
+      if (kIsPQ)
+        triplets.emplace_back(a + npqpv, b, 0.0); // J3
+      if (kIsPQ && jIsPQ)
+        triplets.emplace_back(a + npqpv, b + npqpv, 0.0); // J4
     }
   }
 
@@ -82,82 +87,58 @@ void PFSolverPowerPolarSparse::setUpJacobianStorage() {
 }
 
 void PFSolverPowerPolarSparse::calculateJacobian() {
-  UInt npqpv = mNumPQBuses + mNumPVBuses;
-  double val;
-  UInt k, j;
-
+  /* 
+  This function fills the entries of the Jacobian matrix
+  We are now using the reverse lookup table instead of scanning
+  the whole array looking for connection
+  Same entries as the previous block-by-block fill, computed in one pass over each row of mY
+  */
+  const UInt npqpv = mNumPQBuses + mNumPVBuses;
   // Pattern is fixed; clear values and refill the existing entries in place.
   mJsparse.coeffs().setZero();
 
-  // J1: dP/dTheta
   for (UInt a = 0; a < npqpv; ++a) {
-    k = mPQPVBusIndices[a];
-    mJsparse.coeffRef(a, a) = -Q(k) - B(k, k) * sol_V.coeff(k) * sol_V.coeff(k);
-    for (UInt b = 0; b < npqpv; ++b) {
-      if (b == a)
-        continue;
-      j = mPQPVBusIndices[b];
-      if (!isConnected(k, j))
-        continue;
-      val = sol_V.coeff(k) * sol_V.coeff(j) *
-            (G(k, j) * sin(sol_D.coeff(k) - sol_D.coeff(j)) -
-             B(k, j) * cos(sol_D.coeff(k) - sol_D.coeff(j)));
-      mJsparse.coeffRef(a, b) = val;
-    }
-  }
+    const UInt k = mPQPVBusIndices[a];
+    const bool kIsPQ = a < mNumPQBuses;
+    const Real Vk = sol_V.coeff(k);
+    Real Gkk = 0.0, Bkk = 0.0;
 
-  // J2: dP/dV
-  for (UInt a = 0; a < npqpv; ++a) {
-    k = mPQPVBusIndices[a];
-    if (a < mNumPQBuses)
-      mJsparse.coeffRef(a, a + npqpv) =
-          P(k) + G(k, k) * sol_V.coeff(k) * sol_V.coeff(k);
-    for (UInt b = 0; b < mNumPQBuses; ++b) {
-      if (b == a)
+    for (CPS::SparseMatrixCompRow::InnerIterator it(mY, k); it; ++it) {
+      const UInt j = static_cast<UInt>(it.col());
+      if (j == k) {
+        Gkk = it.value().real();
+        Bkk = it.value().imag();
         continue;
-      j = mPQPVBusIndices[b];
-      if (!isConnected(k, j))
-        continue;
-      val = sol_V.coeff(k) * sol_V.coeff(j) *
-            (G(k, j) * cos(sol_D.coeff(k) - sol_D.coeff(j)) +
-             B(k, j) * sin(sol_D.coeff(k) - sol_D.coeff(j)));
-      mJsparse.coeffRef(a, b + npqpv) = val;
-    }
-  }
+      }
+      const Int b = mPQPVPositionOfBus[j]; 
+      if (b < 0) // slack 
+        continue; 
+      const bool jIsPQ = static_cast<UInt>(b) < mNumPQBuses; 
 
-  // J3: dQ/dTheta
-  for (UInt a = 0; a < mNumPQBuses; ++a) {
-    k = mPQPVBusIndices[a];
-    mJsparse.coeffRef(a + npqpv, a) =
-        P(k) - G(k, k) * sol_V.coeff(k) * sol_V.coeff(k);
-    for (UInt b = 0; b < npqpv; ++b) {
-      if (b == a)
-        continue;
-      j = mPQPVBusIndices[b];
-      if (!isConnected(k, j))
-        continue;
-      val = sol_V.coeff(k) * sol_V.coeff(j) *
-            (G(k, j) * cos(sol_D.coeff(k) - sol_D.coeff(j)) +
-             B(k, j) * sin(sol_D.coeff(k) - sol_D.coeff(j)));
-      mJsparse.coeffRef(a + npqpv, b) = -val;
-    }
-  }
+      const Real G = it.value().real(); 
+      const Real B = it.value().imag(); 
+      const Real d = sol_D.coeff(k) - sol_D.coeff(j);
+      const Real VkVj = Vk * sol_V.coeff(j); 
+      const Real s = VkVj * (G * sin(d) - B * cos(d)); 
+      const Real c = VkVj * (G * cos(d) + B * sin(d)); 
 
-  // J4: dQ/dV
-  for (UInt a = 0; a < mNumPQBuses; ++a) {
-    k = mPQPVBusIndices[a];
-    mJsparse.coeffRef(a + npqpv, a + npqpv) =
-        Q(k) - B(k, k) * sol_V.coeff(k) * sol_V.coeff(k);
-    for (UInt b = 0; b < mNumPQBuses; ++b) {
-      if (b == a)
-        continue;
-      j = mPQPVBusIndices[b];
-      if (!isConnected(k, j))
-        continue;
-      val = sol_V.coeff(k) * sol_V.coeff(j) *
-            (G(k, j) * sin(sol_D.coeff(k) - sol_D.coeff(j)) -
-             B(k, j) * cos(sol_D.coeff(k) - sol_D.coeff(j)));
-      mJsparse.coeffRef(a + npqpv, b + npqpv) = val;
+      mJsparse.coeffRef(a, b) = s; // J1 dP/dTheta
+      if (jIsPQ)
+        mJsparse.coeffRef(a, b + npqpv) = c; // J2 dP/dV
+      if (kIsPQ)
+        mJsparse.coeffRef(a + npqpv, b) = -c; // J3 dQ/dTheta
+      if (kIsPQ && jIsPQ)
+        mJsparse.coeffRef(a + npqpv, b + npqpv) = s; // J4 dQ/dV
+    }
+      
+    // diagonals, with P(k) and Q(k) computed once
+    const Real Pk = P(k);
+    const Real Qk = Q(k);
+    mJsparse.coeffRef(a, a) = -Qk - Bkk * Vk * Vk; // J1
+    if (kIsPQ) {
+      mJsparse.coeffRef(a, a + npqpv) = Pk + Gkk * Vk * Vk;         // J2
+      mJsparse.coeffRef(a + npqpv, a) = Pk - Gkk * Vk * Vk;         // J3
+      mJsparse.coeffRef(a + npqpv, a + npqpv) = Qk - Bkk * Vk * Vk; // J4
     }
   }
 }

@@ -27,8 +27,6 @@ protected:
 
   /// Construct the structural sparsity pattern of the Jacobian from the bus admittance matrix
   void buildJacobianPattern();
-  /// Whether buses k and j are connected (off-diagonal Jacobian entry exists)
-  bool isConnected(CPS::UInt k, CPS::UInt j);
 
 public:
   /// Constructor to be used in simulation examples.

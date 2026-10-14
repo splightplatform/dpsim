@@ -64,6 +64,8 @@ protected:
   std::vector<CPS::UInt> mVDBusIndices;
   /// Vector with indices of both PQ and PV buses
   std::vector<CPS::UInt> mPQPVBusIndices;
+  /// Position of each bus in mPQPVBusIndices for reverse lookup, -1 for VD buses
+  std::vector<Int> mPQPVPositionOfBus; 
 
   /// Admittance matrix
   CPS::SparseMatrixCompRow mY;

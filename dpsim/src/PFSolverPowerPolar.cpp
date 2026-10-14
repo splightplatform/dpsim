@@ -518,19 +518,25 @@ void PFSolverPowerPolar::calculateNodalInjection() {
 }
 
 Real PFSolverPowerPolar::P(UInt k) {
+  // P(k) = Vk · Σj Vj · (G·cos d + B·sin d)
+  // d = θk − θj
+  // use sparse matrix inner-iterator 
+  // (it(mY, k) = iterator to first entry in row k
+  // it.col() is j, it.value() is admittance, it.row() is k 
   Real val = 0.0;
-  for (UInt j = 0; j < mSystem.mNodes.size(); ++j) {
-    val += sol_V.coeff(j) * (G(k, j) * cos(sol_D.coeff(k) - sol_D.coeff(j)) +
-                             B(k, j) * sin(sol_D.coeff(k) - sol_D.coeff(j)));
+  for (CPS::SparseMatrixCompRow::InnerIterator it(mY, k); it; ++it){
+    const Real d = sol_D.coeff(k) - sol_D.coeff(it.col()); 
+    val += sol_V.coeff(it.col()) * (it.value().real() * cos(d) + it.value().imag() * sin(d));
   }
-  return sol_V.coeff(k) * val;
+  return sol_V.coeff(k) * val; 
 }
 
 Real PFSolverPowerPolar::Q(UInt k) {
+  // Q(k) = Vk · Σj Vj · (G·sin d − B·cos d)
   Real val = 0.0;
-  for (UInt j = 0; j < mSystem.mNodes.size(); ++j) {
-    val += sol_V.coeff(j) * (G(k, j) * sin(sol_D.coeff(k) - sol_D.coeff(j)) -
-                             B(k, j) * cos(sol_D.coeff(k) - sol_D.coeff(j)));
+  for (CPS::SparseMatrixCompRow::InnerIterator it(mY, k); it; ++it){
+    const Real d = sol_D.coeff(k) - sol_D.coeff(it.col()); 
+    val += sol_V.coeff(it.col()) * (it.value().real() * sin(d) - it.value().imag() * cos(d)); 
   }
   return sol_V.coeff(k) * val;
 }
@@ -541,8 +547,9 @@ void PFSolverPowerPolar::calculatePAndQAtSlackBus() {
 
     // Net nodal injection into the network: S_inj = V * conj(YV)
     CPS::Complex I(0.0, 0.0);
-    for (UInt j = 0; j < mSystem.mNodes.size(); ++j)
-      I += mY.coeff(node_idx, j) * sol_Vcx(j);
+    // use inner iterator
+    for (CPS::SparseMatrixCompRow::InnerIterator it(mY, node_idx); it; ++it)
+      I += it.value() * sol_Vcx(it.col()); 
 
     CPS::Complex S = sol_Vcx(node_idx) * conj(I);
 
@@ -582,8 +589,9 @@ void PFSolverPowerPolar::calculateQAtPVBuses() {
 
     // Net nodal injection into the network: S_inj = V * conj(YV)
     CPS::Complex I(0.0, 0.0);
-    for (UInt j = 0; j < mSystem.mNodes.size(); ++j)
-      I += mY.coeff(node_idx, j) * sol_Vcx(j);
+    // use inner iterator
+    for (CPS::SparseMatrixCompRow::InnerIterator it(mY, node_idx); it; ++it)
+      I += it.value() * sol_Vcx(it.col());
 
     CPS::Complex S = sol_Vcx(node_idx) * conj(I);
 
@@ -624,8 +632,9 @@ CPS::Real PFSolverPowerPolar::generatorReactivePowerPerUnit(
     CPS::TopologicalNode::Ptr node) {
   UInt k = node->matrixNodeIndex();
   CPS::Complex I(0.0, 0.0);
-  for (UInt j = 0; j < mSystem.mNodes.size(); ++j)
-    I += mY.coeff(k, j) * sol_Vcx(j);
+  // user inner iterator
+  for (CPS::SparseMatrixCompRow::InnerIterator it(mY, k); it; ++it)
+    I += it.value() * sol_Vcx(it.col());
   // Net nodal injection S = generator - load; add load back for generator Q.
   CPS::Complex S = sol_Vcx(k) * conj(I);
   return S.imag() + loadReactivePowerPerUnit(node);
@@ -773,8 +782,8 @@ void PFSolverPowerPolar::calculatePAndQInjectionPQBuses() {
 
     // calculate power flowing out of the node into the admittance matrix (i.e. S_inj)
     CPS::Complex I(0.0, 0.0);
-    for (UInt j = 0; j < mSystem.mNodes.size(); ++j)
-      I += mY.coeff(node_idx, j) * sol_Vcx(j);
+    for (CPS::SparseMatrixCompRow::InnerIterator it(mY, node_idx); it; ++it)
+      I += it.value() * sol_Vcx(it.col());
     CPS::Complex S = sol_Vcx(node_idx) * conj(I);
 
     // Subtracting shunt power to obtain power injection flowing from this node to the other nodes (i.e. S_inj_to_other)

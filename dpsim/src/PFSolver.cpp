@@ -314,6 +314,11 @@ void PFSolver::rebuildBusIndexAggregates() {
                          mPQBusIndices.end());
   mPQPVBusIndices.insert(mPQPVBusIndices.end(), mPVBusIndices.begin(),
                          mPVBusIndices.end());
+  
+  // build reverse lookup table whenever bus aggregate updates 
+  mPQPVPositionOfBus.assign(mSystem.mNodes.size(), -1);
+  for (UInt a = 0; a < mPQPVBusIndices.size(); ++a)
+    mPQPVPositionOfBus[mPQPVBusIndices[a]] = a;
 }
 
 void PFSolver::resetToOriginalClassification() {
@@ -596,6 +601,8 @@ void PFSolver::composeAdmittanceMatrix() {
     for (auto shunt : mShunts) {
       shunt->pfApplyAdmittanceMatrixStamp(mY);
     }
+    // compress mY so walks are faster in storage
+    mY.makeCompressed(); 
   }
   if (mLines.empty() && mTransformers.empty() && mTransformers3W.empty()) {
     throw std::invalid_argument("There are no bus");

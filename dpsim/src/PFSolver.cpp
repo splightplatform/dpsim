@@ -686,8 +686,6 @@ Bool PFSolver::solvePowerflow() {
   mTotalIterations = 0;
   // cleared below by any outer loop that gives up or is skipped
   mOuterLoopsSettled = true;
-  if (mUseFastDecoupledWarmStart)
-    runFastDecoupled(mFastDecoupledMaxIterations, mFastDecoupledHandoffTol);
   Bool converged = runNewtonRaphson("initial");
 
   if (!mEnforceReactiveLimits && mRegulatedBusOfGen.empty())

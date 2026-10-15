@@ -62,10 +62,6 @@ public:
   /// switching. Default false; opt in via setPFSolverEnforceReactiveLimits(true).
   const CPS::Attribute<Bool>::Ptr mPFEnforceReactiveLimits;
 
-  /// Run fast-decoupled iterations before the initial Newton-Raphson solve.
-  /// Default false; opt in via setPFSolverFastDecoupledWarmStart(true).
-  const CPS::Attribute<Bool>::Ptr mPFFastDecoupledWarmStart;
-
   /// Loose tolerance for a zone's Load base-voltage vs. its rating; default 0.1
   const CPS::Attribute<Real>::Ptr mPFBaseVoltageLooseTolerance;
 
@@ -295,10 +291,6 @@ public:
   void setPFSolverEnforceReactiveLimits(Bool value);
 
   Bool getPFSolverEnforceReactiveLimits() const;
-
-  void setPFSolverFastDecoupledWarmStart(Bool value);
-
-  Bool getPFSolverFastDecoupledWarmStart() const;
 
   void setPFSolverBaseVoltageLooseTolerance(Real tolerance);
 

@@ -43,9 +43,6 @@ void PFSolverPowerPolar::generateInitialSolution(Real time,
     sol_D = mLastConvergedD;
   }
 
-  if (!can_keep)
-    mLmLambda = 1e-3;
-
   // update components
   for (auto comp : mSystem.mComponents) {
     if (auto load = std::dynamic_pointer_cast<CPS::SP::Ph1::Load>(comp)) {
@@ -308,38 +305,43 @@ void PFSolverPowerPolar::calculateJacobian() {
   }
 }
 
-void PFSolverPowerPolar::updateSolution() {
+Bool PFSolverPowerPolar::updateSolution() {
   UInt npqpv = mNumPQBuses + mNumPVBuses;
 
   CPS::Vector sol_V_prev = sol_V;
   CPS::Vector sol_D_prev = sol_D;
+  CPS::Vector mF_prev = mF; 
   Real prevMismatchNorm = mF.norm();
-
+  Real bestNorm = prevMismatchNorm; 
+  CPS::Vector step = mX; // vector of individual steps for buses
+  
   const double maxDVpu = 0.1;
   const double maxDThetaRad = 0.2;
-
-  double baseScale = 1.0;
+  UInt nClamped = 0; 
+  
+  // Use clampled scales rather than one base scale
+  // Δθ_k ← clamp(Δθ_k, −0.2, +0.2)        for every PQ and PV bus
   for (UInt a = 0; a < npqpv; ++a) {
-    double dTheta = std::abs(mX.coeff(a));
-    if (dTheta > maxDThetaRad)
-      baseScale = std::min(baseScale, maxDThetaRad / dTheta);
+    step(a) = std::clamp(mX.coeff(a), -maxDThetaRad, maxDThetaRad); 
+    if (step(a) != mX.coeff(a)) ++nClamped;
   }
+  
+  // ΔV_k/V_k ← clamp(ΔV_k/V_k, −0.1, +0.1) for every PQ bus
   for (UInt b = 0; b < mNumPQBuses; ++b) {
-    double dVrel = std::abs(mX.coeff(npqpv + b));
-    if (dVrel > maxDVpu)
-      baseScale = std::min(baseScale, maxDVpu / dVrel);
+    step(npqpv + b) = std::clamp(mX.coeff(npqpv + b), -maxDVpu, maxDVpu); 
+    if (step(npqpv + b) != mX.coeff(npqpv + b)) ++nClamped; 
   }
-
-  double scale = baseScale;
+  
+  double scale = 1.0; 
   const int maxBacktracks = 6;
-  int attemptsUsed = 0;
+  Bool improved = false;
   for (int attempt = 0; attempt <= maxBacktracks; ++attempt) {
-    attemptsUsed = attempt;
     for (UInt a = 0; a < npqpv; ++a) {
       UInt k = mPQPVBusIndices[a];
-      sol_D(k) = sol_D_prev(k) + scale * mX.coeff(a);
+      sol_D(k) = sol_D_prev(k) + scale * step(a);
       if (a < mNumPQBuses)
-        sol_V(k) = sol_V_prev(k) * (1.0 + scale * mX.coeff(a + npqpv));
+        sol_V(k) = sol_V_prev(k) * (1.0 + scale * step(a + npqpv));
+      
     }
     for (auto node : mSystem.mNodes) {
       UInt idx = node->matrixNodeIndex();
@@ -347,50 +349,45 @@ void PFSolverPowerPolar::updateSolution() {
     }
 
     calculateMismatch();
+    bestNorm = std::min(bestNorm, mF.norm()); 
 
-    if (mF.norm() <= 0.99 * prevMismatchNorm || attempt == maxBacktracks)
+    if (mF.norm() <= 0.99 * prevMismatchNorm){
+      improved = true; 
       break;
+    }
     scale *= 0.5;
   }
+  if (!improved){ 
+    // restore old values 
+    sol_V = sol_V_prev; 
+    sol_D = sol_D_prev; 
+    mF = mF_prev; 
 
-  if (attemptsUsed == 0) {
-    mLmLambda = std::max(mLmLambda * 0.5, 1e-6);
-  } else {
-    mLmLambda = std::min(mLmLambda * 4.0, 1e4);
-  }
-
-  if (attemptsUsed >= maxBacktracks) {
-    ++mStagnantIterations;
-  } else {
-    mStagnantIterations = 0;
-  }
-
-  //perturb if stuck (heuristic)
-  if (mStagnantIterations >= 5) {
-    mLmLambda = 1e-2;
-    mStagnantIterations = 0;
-    SPDLOG_LOGGER_WARN(mSLog, "LM stagnated at local minimum; perturbing state to escape");
-
-    for (UInt a = 0; a < npqpv; ++a) {
-      UInt k = mPQPVBusIndices[a];
-      sol_D(k) += 0.01 * (2.0 * ((double)rand() / RAND_MAX) - 1.0);
-      if (a < mNumPQBuses)
-        sol_V(k) *= (1.0 + 0.01 * (2.0 * ((double)rand() / RAND_MAX) - 1.0));
-    }
+    // rebuild sol_V_complex
     for (auto node : mSystem.mNodes) {
       UInt idx = node->matrixNodeIndex();
       sol_V_complex(idx) = Math::polar(sol_V(idx), sol_D(idx));
     }
-    calculateMismatch();
+
+    // warn 
+    SPDLOG_LOGGER_WARN(mSLog, "line search: no step improved |F| (prev={}, best={}, minScale={}); restoring previous state",
+                   prevMismatchNorm, bestNorm, 2 * scale);
+    return false; 
   }
 
+  SPDLOG_LOGGER_INFO(mSLog, "step: {} entries clamped, accepted scale {}", nClamped, scale);
+  return true;
 }
 
 void PFSolverPowerPolar::setSolution() {
 
-  if (!isConverged) {
-    SPDLOG_LOGGER_WARN(mSLog, "Not converged within {} iterations",
-                       mIterations);
+  if (!mSolveSucceeded) {
+    if (isConverged)
+      SPDLOG_LOGGER_WARN(mSLog, "Last Newton-Raphson run converged, but the "
+                                "Q-limit or remote-regulation loop did not succeed");
+    else
+      SPDLOG_LOGGER_WARN(mSLog, "Not converged within {} iterations",
+                         mIterations);
 
     SPDLOG_LOGGER_WARN(mSLog, "Writing last iterate to result state "
                               "(not stored as warm-start solution).");
@@ -671,7 +668,8 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
            it->second >= mMaxQLimitSwitchesPerBus;
   };
 
-  std::vector<std::tuple<CPS::TopologicalNode::Ptr, bool, CPS::Real>> toPQ;
+  // node, pinned at Qmax?, Q limit [pu], violation beyond the limit [pu]
+  std::vector<std::tuple<CPS::TopologicalNode::Ptr, bool, CPS::Real, CPS::Real>> toPQ;
   std::vector<CPS::TopologicalNode::Ptr> toPV;
 
   // PV -> PQ: voltage-controlling generators that hit a reactive limit.
@@ -683,9 +681,17 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
       continue;
     CPS::Real qGen = generatorReactivePowerPerUnit(node);
     if (CPS::Math::isFinite(qMaxPU) && qGen > qMaxPU)
-      toPQ.emplace_back(node, true, qMaxPU);
+      toPQ.emplace_back(node, true, qMaxPU, qGen - qMaxPU);
     else if (CPS::Math::isFinite(qMinPU) && qGen < qMinPU)
-      toPQ.emplace_back(node, false, qMinPU);
+      toPQ.emplace_back(node, false, qMinPU, qMinPU - qGen);
+  }
+
+  // optionally switch only the worst violators this pass
+  if (mMaxQLimitSwitchesPerPass > 0 && toPQ.size() > mMaxQLimitSwitchesPerPass) {
+    std::sort(toPQ.begin(), toPQ.end(), [](const auto &l, const auto &r) {
+      return std::get<3>(l) > std::get<3>(r);
+    });
+    toPQ.resize(mMaxQLimitSwitchesPerPass);
   }
 
   // PQ -> PV: pinned generators whose constraint is no longer binding.
@@ -704,7 +710,9 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
       toPV.push_back(node);
   }
 
-  // Apply PV -> PQ switches (pin reactive injection at the limit via continuation).
+  // apply every switch of this pass at once
+
+  // Apply PV -> PQ switches (pin reactive injection at the limit).
   for (auto &c : toPQ) {
     auto node = std::get<0>(c);
     bool atMax = std::get<1>(c);
@@ -720,33 +728,12 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
           mSLog, "Q-limit: bus {} frozen at {} after {} switches", node->name(),
           atMax ? "Qmax" : "Qmin", mQLimitSwitchCount[node]);
     else
-      SPDLOG_LOGGER_INFO(mSLog, "Q-limit: PV bus {} -> PQ pinned at {}",
-                         node->name(), atMax ? "Qmax" : "Qmin");
-
-    // Rebuild index arrays now that this bus's classification changed, so the
-    // solve below runs against the right unknown set.
-    reclassifyBuses();
-
-    CPS::Vector sol_V_prePin = sol_V;
-    CPS::Vector sol_D_prePin = sol_D;
+      SPDLOG_LOGGER_INFO(mSLog, "Q-limit: PV bus {} -> PQ pinned at {} (violation {:.4f} pu)",
+                         node->name(), atMax ? "Qmax" : "Qmin", std::get<3>(c));
 
     // Pin Q directly at the limit.
     Qesp(idx) = qLimPU - loadReactivePowerPerUnit(node);
     sol_Q(idx) = Qesp(idx);
-
-    if (!runNewtonRaphson(fmt::format("Q-pin bus {}", node->name()))) {
-      SPDLOG_LOGGER_WARN(mSLog,
-          "Q-pin: direct solve failed for bus {}; restoring pre-pin state",
-          node->name());
-      sol_V = sol_V_prePin;
-      sol_D = sol_D_prePin;
-      for (auto n : mSystem.mNodes) {
-        UInt i = n->matrixNodeIndex();
-        sol_V_complex(i) = Math::polar(sol_V(i), sol_D(i));
-      }
-    }
-
-    calculateMismatch();
   }
 
   // Apply PQ -> PV switches (restore voltage control).
@@ -767,6 +754,13 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
                        node->name());
   }
 
+  for (auto n : mSystem.mNodes) {
+    UInt i = n->matrixNodeIndex();
+    sol_V_complex(i) = Math::polar(sol_V(i), sol_D(i));
+  }
+
+  SPDLOG_LOGGER_INFO(mSLog, "Q-limit pass: {} PV -> PQ, {} PQ -> PV",
+                     toPQ.size(), toPV.size());
   return !toPQ.empty() || !toPV.empty();
 }
 

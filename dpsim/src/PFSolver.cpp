@@ -99,12 +99,8 @@ void PFSolver::setUpJacobianStorage() {
 }
 
 void PFSolver::solveJacobianSystem() {
-  CPS::Matrix JtJ = mJ.transpose() * mJ;
-  for (int k = 0; k < JtJ.rows(); k++)
-    JtJ(k, k) += mLmLambda;
-
-  CPS::Vector JtF = mJ.transpose() * mF;
-  mX = JtJ.ldlt().solve(JtF);
+  // Plain Newton step; robustness comes from the step control in updateSolution
+  mX = mJ.partialPivLu().solve(mF);
 }
 
 void PFSolver::assignMatrixNodeIndices() {
@@ -661,10 +657,12 @@ Bool PFSolver::runNewtonRaphson(const CPS::String &label) {
     solveJacobianSystem();
 
     // Calculate new solution based on mX increments obtained from equation system
-    updateSolution();
-
-    // Calculate the mismatch according to the current solution
-    calculateMismatch();
+    if (!updateSolution()) {
+      mIterations = i;
+      SPDLOG_LOGGER_WARN(mSLog, "line search failed at iter {}; stopping run [{}]", i, label);
+      reportProgress(label, i); 
+      break;
+    }
 
     SPDLOG_LOGGER_INFO(mSLog, "iter {} max|mismatch|={} norm={}",
                    i, mF.cwiseAbs().maxCoeff(), mF.norm());
@@ -809,7 +807,7 @@ Bool PFSolver::resolveRemoteRegulation() {
 void PFSolver::SolveTask::execute(Real time, Int timeStepCount) {
   // apply keepLastSolution to save computation time
   mSolver.generateInitialSolution(time, mSolver.mKeepLastSolution);
-  mSolver.solvePowerflow();
+  mSolver.mSolveSucceeded = mSolver.solvePowerflow();
   mSolver.setSolution();
 }
 

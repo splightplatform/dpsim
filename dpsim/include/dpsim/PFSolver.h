@@ -35,10 +35,6 @@ protected:
   PFProgressCallback mProgressCallback;
   void reportProgress(const CPS::String &phase, CPS::UInt iteration);
 
-  // Levenberg-Marquardt regularization for the Newton-Raphson solve
-  Real mLmLambda = 1e-3;
-  UInt mStagnantIterations = 0;
-
   // Remote regulation
   std::map<CPS::UInt, CPS::UInt> mRegulatedBusOfGen; // genBusIdx -> targetBusIdx (only entries where they differ)
   std::map<CPS::UInt, CPS::Real> mLocalVSetOverride; // genBusIdx -> current local V_set_pu being tuned
@@ -133,6 +129,8 @@ protected:
   CPS::UInt mMaxOuterIterations = 10;
   /// Maximum number of PV<->PQ switches per bus before it is frozen (anti-oscillation)
   CPS::UInt mMaxQLimitSwitchesPerBus = 2;
+  /// Maximum PV->PQ switches per Q-limit pass, worst violators first; 0 = no cap
+  CPS::UInt mMaxQLimitSwitchesPerPass = 0;
   /// Relative tolerance for non-authoritative (e.g. Load) base-voltage candidates vs. the zone's rating
   CPS::Real mBaseVoltageLooseTolerance = 0.1;
   /// Relative tolerance between authoritative base-voltage sources (generator/transformer/network-injection/VSI) within a zone
@@ -141,8 +139,11 @@ protected:
   CPS::Real mBaseApparentPower;
   /// Fallback base apparent power if no generator or transformer rating is found
   CPS::Real mBaseApparentPowerFallback = 100e6;
-  /// Convergence flag
+  /// Convergence flag of the last Newton-Raphson run
   CPS::Bool isConverged = false;
+  /// Result of the last solvePowerflow(): base solve converged and every
+  /// enabled outer loop (Q limits, remote regulation) succeeded
+  CPS::Bool mSolveSucceeded = false;
   /// Flag whether solution vectors are initialized
   CPS::Bool solutionInitialized = false;
   /// Flag whether complex solution vectors are initialized
@@ -159,7 +160,9 @@ protected:
   /// Calculate the Jacobian
   virtual void calculateJacobian() = 0;
   /// Update solution in each iteration
-  virtual void updateSolution() = 0;
+  // true means a step was accepted (went correct direction)
+  // false means the previous state was restored and the run should stop (divergence)
+  virtual Bool updateSolution() = 0;
   /// Set final solution
   virtual void setSolution() = 0;
 
@@ -218,8 +221,11 @@ protected:
 public:
   void setProgressCallback(PFProgressCallback cb) { mProgressCallback = std::move(cb); }
   // Accessors for more observability during load-flow solved
-  /// Whether the last Newton-Raphson run converged
+  /// Whether the last Newton-Raphson run converged. Can be true even when the
+  /// solve as a whole failed; use getSolveSucceeded() for the overall result
   CPS::Bool getConverged() const { return isConverged; }
+  /// Whether the last solve succeeded as a whole, outer loops included
+  CPS::Bool getSolveSucceeded() const { return mSolveSucceeded; }
   /// Iterations of the last Newton-Raphson run
   CPS::UInt getIterations() const { return mIterations; }
   /// Iterations summed over every Newton-Raphson run of the last solve,
@@ -260,6 +266,11 @@ public:
   /// Enable generator reactive-limit enforcement (PV<->PQ outer loop)
   void setEnforceReactiveLimits(CPS::Bool value) {
     mEnforceReactiveLimits = value;
+  }
+
+  /// Cap PV->PQ switches per Q-limit pass to the worst violators; 0 = no cap
+  void setMaxQLimitSwitchesPerPass(CPS::UInt maxSwitches) {
+    mMaxQLimitSwitchesPerPass = maxSwitches;
   }
 
   /// Raise for grids with legitimate large voltage drop (e.g. untapped feeders)

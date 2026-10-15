@@ -54,7 +54,7 @@ protected:
   /// Calculate the Jacobian
   void calculateJacobian() override;
   /// Update solution in each iteration
-  void updateSolution() override;
+  Bool updateSolution() override;
   /// Set final solution
   void setSolution() override;
   /// Calculate mismatch

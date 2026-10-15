@@ -308,38 +308,45 @@ void PFSolverPowerPolar::calculateJacobian() {
   }
 }
 
-void PFSolverPowerPolar::updateSolution() {
+Bool PFSolverPowerPolar::updateSolution() {
   UInt npqpv = mNumPQBuses + mNumPVBuses;
 
   CPS::Vector sol_V_prev = sol_V;
   CPS::Vector sol_D_prev = sol_D;
+  CPS::Vector mF_prev = mF; 
   Real prevMismatchNorm = mF.norm();
-
+  Real bestNorm = prevMismatchNorm; 
+  CPS::Vector step = mX; // vector of individual steps for buses
+  
   const double maxDVpu = 0.1;
   const double maxDThetaRad = 0.2;
-
-  double baseScale = 1.0;
+  UInt nClamped = 0; 
+  
+  // Use clampled scales rather than one base scale
+  // Δθ_k ← clamp(Δθ_k, −0.2, +0.2)        for every PQ and PV bus
   for (UInt a = 0; a < npqpv; ++a) {
-    double dTheta = std::abs(mX.coeff(a));
-    if (dTheta > maxDThetaRad)
-      baseScale = std::min(baseScale, maxDThetaRad / dTheta);
+    step(a) = std::clamp(mX.coeff(a), -maxDThetaRad, maxDThetaRad); 
+    if (step(a) != mX.coeff(a)) ++nClamped;
   }
+  
+  // ΔV_k/V_k ← clamp(ΔV_k/V_k, −0.1, +0.1) for every PQ bus
   for (UInt b = 0; b < mNumPQBuses; ++b) {
-    double dVrel = std::abs(mX.coeff(npqpv + b));
-    if (dVrel > maxDVpu)
-      baseScale = std::min(baseScale, maxDVpu / dVrel);
+    step(npqpv + b) = std::clamp(mX.coeff(npqpv + b), -maxDVpu, maxDVpu); 
+    if (step(npqpv + b) != mX.coeff(npqpv + b)) ++nClamped; 
   }
-
-  double scale = baseScale;
+  
+  double scale = 1.0; 
   const int maxBacktracks = 6;
+  Bool improved = false; 
   int attemptsUsed = 0;
   for (int attempt = 0; attempt <= maxBacktracks; ++attempt) {
     attemptsUsed = attempt;
     for (UInt a = 0; a < npqpv; ++a) {
       UInt k = mPQPVBusIndices[a];
-      sol_D(k) = sol_D_prev(k) + scale * mX.coeff(a);
+      sol_D(k) = sol_D_prev(k) + scale * step(a);
       if (a < mNumPQBuses)
-        sol_V(k) = sol_V_prev(k) * (1.0 + scale * mX.coeff(a + npqpv));
+        sol_V(k) = sol_V_prev(k) * (1.0 + scale * step(a + npqpv));
+      
     }
     for (auto node : mSystem.mNodes) {
       UInt idx = node->matrixNodeIndex();
@@ -347,43 +354,39 @@ void PFSolverPowerPolar::updateSolution() {
     }
 
     calculateMismatch();
+    bestNorm = std::min(bestNorm, mF.norm()); 
 
-    if (mF.norm() <= 0.99 * prevMismatchNorm || attempt == maxBacktracks)
+    if (mF.norm() <= 0.99 * prevMismatchNorm){
+      improved = true; 
       break;
+    }
     scale *= 0.5;
   }
+  if (!improved){ 
+    // restore old values 
+    sol_V = sol_V_prev; 
+    sol_D = sol_D_prev; 
+    mF = mF_prev; 
 
+    // rebuild sol_V_complex
+    for (auto node : mSystem.mNodes) {
+      UInt idx = node->matrixNodeIndex();
+      sol_V_complex(idx) = Math::polar(sol_V(idx), sol_D(idx));
+    }
+
+    // warn 
+    SPDLOG_LOGGER_WARN(mSLog, "line search: no step improved |F| (prev={}, best={}, minScale={}); restoring previous state",
+                   prevMismatchNorm, bestNorm, 2 * scale);
+    return false; 
+  }
+
+  SPDLOG_LOGGER_DEBUG(mSLog, "step: {} entries clamped, accepted scale {}", nClamped, scale);
   if (attemptsUsed == 0) {
     mLmLambda = std::max(mLmLambda * 0.5, 1e-6);
   } else {
     mLmLambda = std::min(mLmLambda * 4.0, 1e4);
   }
-
-  if (attemptsUsed >= maxBacktracks) {
-    ++mStagnantIterations;
-  } else {
-    mStagnantIterations = 0;
-  }
-
-  //perturb if stuck (heuristic)
-  if (mStagnantIterations >= 5) {
-    mLmLambda = 1e-2;
-    mStagnantIterations = 0;
-    SPDLOG_LOGGER_WARN(mSLog, "LM stagnated at local minimum; perturbing state to escape");
-
-    for (UInt a = 0; a < npqpv; ++a) {
-      UInt k = mPQPVBusIndices[a];
-      sol_D(k) += 0.01 * (2.0 * ((double)rand() / RAND_MAX) - 1.0);
-      if (a < mNumPQBuses)
-        sol_V(k) *= (1.0 + 0.01 * (2.0 * ((double)rand() / RAND_MAX) - 1.0));
-    }
-    for (auto node : mSystem.mNodes) {
-      UInt idx = node->matrixNodeIndex();
-      sol_V_complex(idx) = Math::polar(sol_V(idx), sol_D(idx));
-    }
-    calculateMismatch();
-  }
-
+  return true; 
 }
 
 void PFSolverPowerPolar::setSolution() {

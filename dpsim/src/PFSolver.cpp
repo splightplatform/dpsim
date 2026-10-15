@@ -661,10 +661,12 @@ Bool PFSolver::runNewtonRaphson(const CPS::String &label) {
     solveJacobianSystem();
 
     // Calculate new solution based on mX increments obtained from equation system
-    updateSolution();
-
-    // Calculate the mismatch according to the current solution
-    calculateMismatch();
+    if (!updateSolution()) {
+      mIterations = i;
+      SPDLOG_LOGGER_WARN(mSLog, "line search failed at iter {}; stopping run [{}]", i, label);
+      reportProgress(label, i); 
+      break;
+    }
 
     SPDLOG_LOGGER_INFO(mSLog, "iter {} max|mismatch|={} norm={}",
                    i, mF.cwiseAbs().maxCoeff(), mF.norm());

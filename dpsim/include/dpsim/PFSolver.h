@@ -37,7 +37,6 @@ protected:
 
   // Levenberg-Marquardt regularization for the Newton-Raphson solve
   Real mLmLambda = 1e-3;
-  UInt mStagnantIterations = 0;
 
   // Remote regulation
   std::map<CPS::UInt, CPS::UInt> mRegulatedBusOfGen; // genBusIdx -> targetBusIdx (only entries where they differ)
@@ -159,7 +158,9 @@ protected:
   /// Calculate the Jacobian
   virtual void calculateJacobian() = 0;
   /// Update solution in each iteration
-  virtual void updateSolution() = 0;
+  // true means a step was accepted (went correct direction)
+  // false means the previous state was restored and the run should stop (divergence)
+  virtual Bool updateSolution() = 0;
   /// Set final solution
   virtual void setSolution() = 0;
 

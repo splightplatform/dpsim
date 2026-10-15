@@ -132,6 +132,12 @@ protected:
   CPS::UInt mMaxOuterIterations = 10;
   /// Maximum number of PV<->PQ switches per bus before it is frozen (anti-oscillation)
   CPS::UInt mMaxQLimitSwitchesPerBus = 2;
+  /// Run fast-decoupled iterations before the initial Newton-Raphson solve
+  CPS::Bool mUseFastDecoupledWarmStart = false;
+  /// Iteration cap for the fast-decoupled warm start
+  CPS::UInt mFastDecoupledMaxIterations = 20;
+  /// Max |mismatch| [pu] at which the warm start hands over to Newton-Raphson
+  CPS::Real mFastDecoupledHandoffTol = 1e-2;
   /// Relative tolerance for non-authoritative (e.g. Load) base-voltage candidates vs. the zone's rating
   CPS::Real mBaseVoltageLooseTolerance = 0.1;
   /// Relative tolerance between authoritative base-voltage sources (generator/transformer/network-injection/VSI) within a zone
@@ -200,6 +206,11 @@ protected:
   Bool runNewtonRaphson(const CPS::String &label = "");
   /// Switch generators violating their Q limits between PV/PQ; base impl is a no-op
   virtual CPS::Bool enforceReactiveLimits() { return false; }
+  /// Fast-decoupled warm start ahead of Newton-Raphson; true if it reached
+  /// handoffTol. Base impl is a no-op
+  virtual CPS::Bool runFastDecoupled(CPS::UInt maxIter, CPS::Real handoffTol) {
+    return false;
+  }
   /// Allocate Jacobian storage; dense by default, sparse subclass overrides
   virtual void setUpJacobianStorage();
   /// Solve the linearized system mJ*mX = mF into mX; sparse subclass overrides
@@ -261,6 +272,24 @@ public:
   /// Enable generator reactive-limit enforcement (PV<->PQ outer loop)
   void setEnforceReactiveLimits(CPS::Bool value) {
     mEnforceReactiveLimits = value;
+  }
+
+  /// Run a fast-decoupled warm start before the initial Newton-Raphson solve
+  void setUseFastDecoupledWarmStart(CPS::Bool value) {
+    mUseFastDecoupledWarmStart = value;
+  }
+
+  CPS::Bool getUseFastDecoupledWarmStart() const {
+    return mUseFastDecoupledWarmStart;
+  }
+
+  void setFastDecoupledMaxIterations(CPS::UInt maxIterations) {
+    mFastDecoupledMaxIterations = maxIterations;
+  }
+
+  /// Max |mismatch| [pu] at which the warm start hands over to Newton-Raphson
+  void setFastDecoupledHandoffTolerance(CPS::Real tolerance) {
+    mFastDecoupledHandoffTol = tolerance;
   }
 
   /// Raise for grids with legitimate large voltage drop (e.g. untapped feeders)

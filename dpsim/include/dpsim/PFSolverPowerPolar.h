@@ -10,6 +10,7 @@
 
 #include <map>
 
+#include <dpsim/DirectLinearSolver.h>
 #include <dpsim/PFSolver.h>
 
 namespace DPsim {
@@ -91,6 +92,20 @@ protected:
   std::map<CPS::TopologicalNode::Ptr, bool> mQLimitConvertedAtMax;
   /// Total PV<->PQ switches per bus over the solve (anti-oscillation cap)
   std::map<CPS::TopologicalNode::Ptr, CPS::UInt> mQLimitSwitchCount;
+  /// Fast-decoupled warm start: angle-from-P and magnitude-from-Q half-steps
+  /// with constant matrices, best state handed over to Newton-Raphson
+  CPS::Bool runFastDecoupled(CPS::UInt maxIter, CPS::Real handoffTol) override;
+  /// Build and factorize B' and B'' for the current PV/PQ classification
+  void buildFastDecoupledMatrices();
+  /// B' (PQ+PV buses): -Im(Y) without shunts, diagonal = -sum of row off-diagonals
+  CPS::SparseMatrixRow mBp;
+  /// B'' (PQ buses): -Im(Y) with shunts
+  CPS::SparseMatrixRow mBpp;
+  std::shared_ptr<DirectLinearSolver> mBpSolver;
+  std::shared_ptr<DirectLinearSolver> mBppSolver;
+  /// Classification B' and B'' were built for; rebuilt when it changes
+  std::vector<CPS::UInt> mFastDecoupledBusIndices;
+  CPS::UInt mFastDecoupledNumPQBuses = 0;
   /// Calculate complex power flowing from this node to the other nodes
   void calculatePAndQInjectionPQBuses();
   /// Calculate branch flows from current solution and store them in line and transformer components

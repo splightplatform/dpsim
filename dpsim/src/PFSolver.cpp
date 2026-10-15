@@ -99,12 +99,8 @@ void PFSolver::setUpJacobianStorage() {
 }
 
 void PFSolver::solveJacobianSystem() {
-  CPS::Matrix JtJ = mJ.transpose() * mJ;
-  for (int k = 0; k < JtJ.rows(); k++)
-    JtJ(k, k) += mLmLambda;
-
-  CPS::Vector JtF = mJ.transpose() * mF;
-  mX = JtJ.ldlt().solve(JtF);
+  // Plain Newton step; robustness comes from the step control in updateSolution
+  mX = mJ.partialPivLu().solve(mF);
 }
 
 void PFSolver::assignMatrixNodeIndices() {
@@ -813,7 +809,7 @@ Bool PFSolver::resolveRemoteRegulation() {
 void PFSolver::SolveTask::execute(Real time, Int timeStepCount) {
   // apply keepLastSolution to save computation time
   mSolver.generateInitialSolution(time, mSolver.mKeepLastSolution);
-  mSolver.solvePowerflow();
+  mSolver.mSolveSucceeded = mSolver.solvePowerflow();
   mSolver.setSolution();
 }
 

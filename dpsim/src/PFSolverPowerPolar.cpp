@@ -51,9 +51,6 @@ void PFSolverPowerPolar::generateInitialSolution(Real time,
     sol_D = mLastConvergedD;
   }
 
-  if (!can_keep)
-    mLmLambda = 1e-3;
-
   // update components
   for (auto comp : mSystem.mComponents) {
     if (auto load = std::dynamic_pointer_cast<CPS::SP::Ph1::Load>(comp)) {
@@ -345,10 +342,8 @@ Bool PFSolverPowerPolar::updateSolution() {
   
   double scale = 1.0; 
   const int maxBacktracks = 6;
-  Bool improved = false; 
-  int attemptsUsed = 0;
+  Bool improved = false;
   for (int attempt = 0; attempt <= maxBacktracks; ++attempt) {
-    attemptsUsed = attempt;
     for (UInt a = 0; a < npqpv; ++a) {
       UInt k = mPQPVBusIndices[a];
       sol_D(k) = sol_D_prev(k) + scale * step(a);
@@ -389,11 +384,6 @@ Bool PFSolverPowerPolar::updateSolution() {
   }
 
   SPDLOG_LOGGER_INFO(mSLog, "step: {} entries clamped, accepted scale {}", nClamped, scale);
-  if (attemptsUsed == 0) {
-    mLmLambda = std::max(mLmLambda * 0.5, 1e-6);
-  } else {
-    mLmLambda = std::min(mLmLambda * 4.0, 1e4);
-  }
   return true;
 }
 
@@ -564,9 +554,13 @@ CPS::Bool PFSolverPowerPolar::runFastDecoupled(CPS::UInt maxIter,
 
 void PFSolverPowerPolar::setSolution() {
 
-  if (!isConverged) {
-    SPDLOG_LOGGER_WARN(mSLog, "Not converged within {} iterations",
-                       mIterations);
+  if (!mSolveSucceeded) {
+    if (isConverged)
+      SPDLOG_LOGGER_WARN(mSLog, "Last Newton-Raphson run converged, but the "
+                                "Q-limit or remote-regulation loop did not succeed");
+    else
+      SPDLOG_LOGGER_WARN(mSLog, "Not converged within {} iterations",
+                         mIterations);
 
     SPDLOG_LOGGER_WARN(mSLog, "Writing last iterate to result state "
                               "(not stored as warm-start solution).");
@@ -847,7 +841,8 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
            it->second >= mMaxQLimitSwitchesPerBus;
   };
 
-  std::vector<std::tuple<CPS::TopologicalNode::Ptr, bool, CPS::Real>> toPQ;
+  // node, pinned at Qmax?, Q limit [pu], violation beyond the limit [pu]
+  std::vector<std::tuple<CPS::TopologicalNode::Ptr, bool, CPS::Real, CPS::Real>> toPQ;
   std::vector<CPS::TopologicalNode::Ptr> toPV;
 
   // PV -> PQ: voltage-controlling generators that hit a reactive limit.
@@ -859,9 +854,17 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
       continue;
     CPS::Real qGen = generatorReactivePowerPerUnit(node);
     if (CPS::Math::isFinite(qMaxPU) && qGen > qMaxPU)
-      toPQ.emplace_back(node, true, qMaxPU);
+      toPQ.emplace_back(node, true, qMaxPU, qGen - qMaxPU);
     else if (CPS::Math::isFinite(qMinPU) && qGen < qMinPU)
-      toPQ.emplace_back(node, false, qMinPU);
+      toPQ.emplace_back(node, false, qMinPU, qMinPU - qGen);
+  }
+
+  // optionally switch only the worst violators this pass
+  if (mMaxQLimitSwitchesPerPass > 0 && toPQ.size() > mMaxQLimitSwitchesPerPass) {
+    std::sort(toPQ.begin(), toPQ.end(), [](const auto &l, const auto &r) {
+      return std::get<3>(l) > std::get<3>(r);
+    });
+    toPQ.resize(mMaxQLimitSwitchesPerPass);
   }
 
   // PQ -> PV: pinned generators whose constraint is no longer binding.
@@ -880,7 +883,9 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
       toPV.push_back(node);
   }
 
-  // Apply PV -> PQ switches (pin reactive injection at the limit via continuation).
+  // apply every switch of this pass at once
+
+  // Apply PV -> PQ switches (pin reactive injection at the limit).
   for (auto &c : toPQ) {
     auto node = std::get<0>(c);
     bool atMax = std::get<1>(c);
@@ -896,33 +901,12 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
           mSLog, "Q-limit: bus {} frozen at {} after {} switches", node->name(),
           atMax ? "Qmax" : "Qmin", mQLimitSwitchCount[node]);
     else
-      SPDLOG_LOGGER_INFO(mSLog, "Q-limit: PV bus {} -> PQ pinned at {}",
-                         node->name(), atMax ? "Qmax" : "Qmin");
-
-    // Rebuild index arrays now that this bus's classification changed, so the
-    // solve below runs against the right unknown set.
-    reclassifyBuses();
-
-    CPS::Vector sol_V_prePin = sol_V;
-    CPS::Vector sol_D_prePin = sol_D;
+      SPDLOG_LOGGER_INFO(mSLog, "Q-limit: PV bus {} -> PQ pinned at {} (violation {:.4f} pu)",
+                         node->name(), atMax ? "Qmax" : "Qmin", std::get<3>(c));
 
     // Pin Q directly at the limit.
     Qesp(idx) = qLimPU - loadReactivePowerPerUnit(node);
     sol_Q(idx) = Qesp(idx);
-
-    if (!runNewtonRaphson(fmt::format("Q-pin bus {}", node->name()))) {
-      SPDLOG_LOGGER_WARN(mSLog,
-          "Q-pin: direct solve failed for bus {}; restoring pre-pin state",
-          node->name());
-      sol_V = sol_V_prePin;
-      sol_D = sol_D_prePin;
-      for (auto n : mSystem.mNodes) {
-        UInt i = n->matrixNodeIndex();
-        sol_V_complex(i) = Math::polar(sol_V(i), sol_D(i));
-      }
-    }
-
-    calculateMismatch();
   }
 
   // Apply PQ -> PV switches (restore voltage control).
@@ -943,6 +927,13 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
                        node->name());
   }
 
+  for (auto n : mSystem.mNodes) {
+    UInt i = n->matrixNodeIndex();
+    sol_V_complex(i) = Math::polar(sol_V(i), sol_D(i));
+  }
+
+  SPDLOG_LOGGER_INFO(mSLog, "Q-limit pass: {} PV -> PQ, {} PQ -> PV",
+                     toPQ.size(), toPV.size());
   return !toPQ.empty() || !toPV.empty();
 }
 

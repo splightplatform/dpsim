@@ -48,6 +48,9 @@ protected:
   /// solver
   std::vector<const Matrix *> mRightVectorStamps;
 
+  /// Without series resistance the resistor and its virtual node are omitted
+  bool hasSeriesResistance() const { return (**mSeriesRes)(0, 0) > 0; }
+
 public:
   /// Defines UID, name and logging level
   PiLine(String uid, String name, Logger::Level logLevel = Logger::Level::off);

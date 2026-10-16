@@ -45,19 +45,25 @@ void EMT::Ph3::PiLine::createSubComponents() {
       ((**mParallelCond)(0, 0) > 0) ? **mParallelCond : defaultParallelCond;
 
   // Create series sub components
-  mSubSeriesResistor =
-      std::make_shared<EMT::Ph3::Resistor>(**mName + "_res", mLogLevel);
-  mSubSeriesResistor->setParameters(**mSeriesRes);
-  mSubSeriesResistor->connect({mTerminals[0]->node(), mVirtualNodes[0]});
-  addMNASubComponent(mSubSeriesResistor,
-                     MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT,
-                     MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT, false);
+  auto seriesNode = mTerminals[0]->node();
+  if (hasSeriesResistance()) {
+    mSubSeriesResistor =
+        std::make_shared<EMT::Ph3::Resistor>(**mName + "_res", mLogLevel);
+    mSubSeriesResistor->setParameters(**mSeriesRes);
+    mSubSeriesResistor->connect({mTerminals[0]->node(), mVirtualNodes[0]});
+    addMNASubComponent(mSubSeriesResistor,
+                       MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT,
+                       MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT, false);
+    seriesNode = mVirtualNodes[0];
+  } else {
+    setVirtualNodeNumber(0);
+  }
 
   if ((**mSeriesInd)(0,0) >= 0){
     mSubSeriesInductor =
       std::make_shared<EMT::Ph3::Inductor>(**mName + "_ind", mLogLevel);
     mSubSeriesInductor->setParameters(**mSeriesInd);
-    mSubSeriesInductor->connect({mVirtualNodes[0], mTerminals[1]->node()});
+    mSubSeriesInductor->connect({seriesNode, mTerminals[1]->node()});
     addMNASubComponent(mSubSeriesInductor,
                       MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT,
                       MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT, true);
@@ -69,7 +75,7 @@ void EMT::Ph3::PiLine::createSubComponents() {
     Real omega = 2. * PI * mFrequencies(0, 0);
     Matrix capacitance = -1. / (omega * omega) * (**mSeriesInd).inverse();
     mSubSeriesCapacitor->setParameters(capacitance);
-    mSubSeriesCapacitor->connect({mVirtualNodes[0], mTerminals[1]->node()});
+    mSubSeriesCapacitor->connect({seriesNode, mTerminals[1]->node()});
     addMNASubComponent(mSubSeriesCapacitor,
                       MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT,
                       MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT, true);
@@ -147,8 +153,9 @@ void EMT::Ph3::PiLine::initializeParentFromNodesAndTerminals(Real frequency) {
   vInitTerm0(1, 0) = vInitTerm0(0, 0) * SHIFT_TO_PHASE_B;
   vInitTerm0(2, 0) = vInitTerm0(0, 0) * SHIFT_TO_PHASE_C;
 
-  mVirtualNodes[0]->setInitialVoltage(PEAK1PH_TO_RMS3PH *
-                                      (vInitTerm0 + **mSeriesRes * iInit));
+  if (hasSeriesResistance())
+    mVirtualNodes[0]->setInitialVoltage(PEAK1PH_TO_RMS3PH *
+                                        (vInitTerm0 + **mSeriesRes * iInit));
 
   SPDLOG_LOGGER_DEBUG(mSLog,
                       "\n--debug--"
@@ -176,7 +183,9 @@ void EMT::Ph3::PiLine::initializeParentFromNodesAndTerminals(Real frequency) {
       Logger::matrixToString(**mIntfCurrent),
       Logger::phasorToString(RMS3PH_TO_PEAK1PH * initialSingleVoltage(0)),
       Logger::phasorToString(RMS3PH_TO_PEAK1PH * initialSingleVoltage(1)),
-      Logger::phasorToString(mVirtualNodes[0]->initialSingleVoltage()));
+      Logger::phasorToString(
+          hasSeriesResistance() ? mVirtualNodes[0]->initialSingleVoltage()
+                                : RMS3PH_TO_PEAK1PH * initialSingleVoltage(0)));
   mSLog->flush();
 }
 
@@ -253,14 +262,17 @@ MNAInterface::List EMT::Ph3::PiLine::mnaTearGroundComponents() {
 }
 
 void EMT::Ph3::PiLine::mnaTearInitialize(Real omega, Real timeStep) {
-  mSubSeriesResistor->mnaTearSetIdx(mTearIdx);
-  mSubSeriesResistor->mnaTearInitialize(omega, timeStep);
+  if (mSubSeriesResistor) {
+    mSubSeriesResistor->mnaTearSetIdx(mTearIdx);
+    mSubSeriesResistor->mnaTearInitialize(omega, timeStep);
+  }
   mSubSeriesTearElement->mnaTearSetIdx(mTearIdx);
   mSubSeriesTearElement->mnaTearInitialize(omega, timeStep);
 }
 
 void EMT::Ph3::PiLine::mnaTearApplyMatrixStamp(SparseMatrixRow &tearMatrix) {
-  mSubSeriesResistor->mnaTearApplyMatrixStamp(tearMatrix);
+  if (mSubSeriesResistor)
+    mSubSeriesResistor->mnaTearApplyMatrixStamp(tearMatrix);
   mSubSeriesTearElement->mnaTearApplyMatrixStamp(tearMatrix);
 }
 

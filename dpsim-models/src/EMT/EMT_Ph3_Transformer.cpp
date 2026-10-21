@@ -80,6 +80,15 @@ void EMT::Ph3::Transformer::createSubComponents() {
                        std::abs(**mRatio), std::arg(**mRatio));
   }
 
+  if (mNumVirtualNodes == 3 && mResistance(0, 0) <= 0) {
+    if (mResistance(0, 0) < 0)
+      SPDLOG_LOGGER_WARN(mSLog,
+                         "Transformer {}: negative resistance {} [Ohm] is "
+                         "omitted, the winding is modeled without a resistor.",
+                         this->name(), mResistance(0, 0));
+    setVirtualNodeNumber(2);
+  }
+
   // Create series sub components
   mSubInductor =
       std::make_shared<EMT::Ph3::Inductor>(**mName + "_ind", mLogLevel);

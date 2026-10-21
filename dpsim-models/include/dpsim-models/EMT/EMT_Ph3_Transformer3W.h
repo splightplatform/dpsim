@@ -47,7 +47,10 @@ private:
   std::array<UInt, NumWindings> mVnCurrent{{UNUSED_VN, UNUSED_VN, UNUSED_VN}};
 
   Bool mWithResistiveLosses;
-  static UInt virtualNodeCount(Bool withResistiveLosses);
+  static UInt virtualNodeCount(UInt resistiveWindings);
+  Bool hasWindingResistance(Winding w) const {
+    return mWithResistiveLosses && resistance(w)(0, 0) > 0;
+  }
 
   void assignVirtualNodeSlots();
   void connectWinding(Winding w);

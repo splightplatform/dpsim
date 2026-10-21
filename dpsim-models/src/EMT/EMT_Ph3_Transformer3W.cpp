@@ -41,7 +41,7 @@ EMT::Ph3::Transformer3W::Transformer3W(String uid, String name,
       mWithResistiveLosses(withResistiveLosses) {
 
   mPhaseType = PhaseType::ABC;
-  setVirtualNodeNumber(virtualNodeCount(withResistiveLosses));
+  setVirtualNodeNumber(virtualNodeCount(withResistiveLosses ? NumWindings : 0));
   setTerminalNumber(NumWindings);
 
   SPDLOG_LOGGER_INFO(mSLog, "Create {} {}", this->type(), name);
@@ -52,9 +52,9 @@ EMT::Ph3::Transformer3W::Transformer3W(String uid, String name,
   **mIntfCurrent = Matrix::Zero(3, NumWindings);
 }
 
-UInt EMT::Ph3::Transformer3W::virtualNodeCount(Bool withResistiveLosses) {
+UInt EMT::Ph3::Transformer3W::virtualNodeCount(UInt resistiveWindings) {
   // TODO: only wye right now
-  return 1 + (withResistiveLosses ? NumWindings : 0) + 2 * (NumWindings - 1);
+  return 1 + resistiveWindings + 2 * (NumWindings - 1);
 }
 
 void EMT::Ph3::Transformer3W::assignVirtualNodeSlots() {
@@ -62,7 +62,7 @@ void EMT::Ph3::Transformer3W::assignVirtualNodeSlots() {
   mVnStar = next++;
 
   for (auto w : AllWindings3W) {
-    if (mWithResistiveLosses)
+    if (hasWindingResistance(w))
       mVnMid[idx(w)] = next++;
 
     if (!isReferenceWinding(w)) {
@@ -141,24 +141,16 @@ void EMT::Ph3::Transformer3W::connectWinding(Winding w) {
                      MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT,
                      MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT, true);
 
-  if (mWithResistiveLosses) {
+  if (mWithResistiveLosses && resistance(w)(0, 0) < 0)
+    SPDLOG_LOGGER_WARN(mSLog,
+                       "Transformer3W {}: winding {} has negative resistance "
+                       "{} [Ohm], it is modeled without a resistor.",
+                       this->name(), tag, resistance(w)(0, 0));
+
+  if (hasWindingResistance(w)) {
     mSubResistor[i] = std::make_shared<EMT::Ph3::Resistor>(
         **mUID + "_res_" + tag, **mName + "_res_" + tag, Logger::Level::off);
-
-    constexpr Real MIN_WINDING_RESISTANCE = 1e-3; // [Ohm]
-    Matrix res = resistance(w);
-    for (UInt p = 0; p < 3; p++) {
-      if (std::abs(res(p, p)) < DOUBLE_EPSILON) {
-        SPDLOG_LOGGER_WARN(
-            mSLog,
-            "Transformer3W {}: winding {} phase {} resistance is "
-            "effectively zero; flooring to {} Ohm to avoid a singular "
-            "resistor stamp (1/R -> Inf/NaN).",
-            this->name(), tag, p, MIN_WINDING_RESISTANCE);
-        res(p, p) = MIN_WINDING_RESISTANCE;
-      }
-    }
-    mSubResistor[i]->setParameters(res);
+    mSubResistor[i]->setParameters(resistance(w));
     addMNASubComponent(mSubResistor[i],
                        MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT,
                        MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT, true);
@@ -167,8 +159,8 @@ void EMT::Ph3::Transformer3W::connectWinding(Winding w) {
   auto starEnd = mVirtualNodes[mVnStar]; 
   auto outerEnd = isReferenceWinding(w) ? node(i) : mVirtualNodes[mVnPreIdeal[i]]; 
 
-  if (mWithResistiveLosses){
-    auto mid = mVirtualNodes[mVnMid[i]]; 
+  if (hasWindingResistance(w)){
+    auto mid = mVirtualNodes[mVnMid[i]];
     if (isReferenceWinding(w)) { 
       mSubResistor[i]->connect({outerEnd, mid}); 
       mSubInductor[i]->connect({mid, starEnd}); 
@@ -191,7 +183,12 @@ void EMT::Ph3::Transformer3W::createSubComponents() {
   mSubCompCreated = true;
 
   resolveReferenceWinding();
-  assignVirtualNodeSlots(); 
+  UInt resistiveWindings = 0;
+  for (auto w : AllWindings3W)
+    if (hasWindingResistance(w))
+      resistiveWindings++;
+  setVirtualNodeNumber(virtualNodeCount(resistiveWindings));
+  assignVirtualNodeSlots();
   for (auto w : AllWindings3W)
     connectWinding(w);
 
@@ -338,7 +335,7 @@ void EMT::Ph3::Transformer3W::initializeParentFromNodesAndTerminals(
     const MatrixComp branchCurrent = windingImpedance[i].inverse() * (starVoltage - referredVoltage[i]);
 
     // no midpoint node if not using resistors
-    if (mWithResistiveLosses) {
+    if (hasWindingResistance(w)) {
       // if reference winding the voltage winding to midpoint is over inductor
       // else its over the resistor
       const MatrixComp compImpedance =

@@ -64,6 +64,10 @@ void EMT::Ph3::Transformer::createSubComponents() {
 
   // Switch terminals so terminal 0 is always the higher-voltage side.
   if (Math::abs(**mRatio) < 1.) {
+    // refer the series impedance to the new terminal-0 side: Z' = Z / |a|²
+    Real ratioNormSq = std::norm(**mRatio); 
+    mResistance /= ratioNormSq;
+    mInductance /= ratioNormSq;
     **mRatio = 1. / **mRatio;
     std::shared_ptr<SimTerminal<Real>> tmp = mTerminals[0];
     mTerminals[0] = mTerminals[1];
@@ -78,6 +82,12 @@ void EMT::Ph3::Transformer::createSubComponents() {
         mNominalVoltageEnd1, mNominalVoltageEnd2);
     SPDLOG_LOGGER_INFO(mSLog, "Tap Ratio = {} [ ] Phase Shift = {} [deg]",
                        std::abs(**mRatio), std::arg(**mRatio));
+    SPDLOG_LOGGER_INFO(mSLog,
+                       "Resistance (re-referred to new terminal 0) = {} [Ohm]",
+                       Logger::matrixToString(mResistance));
+    SPDLOG_LOGGER_INFO(mSLog,
+                       "Inductance (re-referred to new terminal 0) = {} [H]",
+                       Logger::matrixToString(mInductance));
   }
 
   // Create series sub components

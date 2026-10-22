@@ -34,6 +34,7 @@ SimPowerComp<Real>::Ptr EMT::Ph3::Transformer::clone(String name) {
   copy->setParameters(mNominalVoltageEnd1, mNominalVoltageEnd2, mRatedPower,
                       std::abs(**mRatio), std::arg(**mRatio), mResistance,
                       mInductance);
+  copy->setZeroSequencePassthrough(mZeroSequencePassthrough); 
   return copy;
 }
 
@@ -89,6 +90,27 @@ void EMT::Ph3::Transformer::createSubComponents() {
                        "Inductance (re-referred to new terminal 0) = {} [H]",
                        Logger::matrixToString(mInductance));
   }
+
+  // Create T matrix: implements T_ij = N · ( k0/3 + (2/3)·cos(θ + (j − i)·2π/3) ), i, j = 0..2
+  Real N = std::abs(**mRatio); 
+  Real theta = std::arg(**mRatio); 
+  Real k0 = mZeroSequencePassthrough ? 1. : 0.;
+
+  if (theta == 0. && k0 == 1.){
+    mTurnsRatio = N * Matrix::Identity(3,3);
+  } else{
+    mTurnsRatio = Matrix(3,3); 
+    for (int i = 0; i < 3; i++){
+      for (int j = 0; j < 3; j++){
+        mTurnsRatio(i,j) = N * (k0 / 3 + (2./3.) * std::cos(theta + (j - i) * (2*PI/3) ) );
+      }
+    }
+  }
+  SPDLOG_LOGGER_INFO(mSLog,
+                     "Turns ratio matrix T (N = {}, phase shift = {} [deg], "
+                     "k0 = {}) = {}",
+                     N, theta * 180. / PI, k0,
+                     Logger::matrixToString(mTurnsRatio));
 
   // Create series sub components
   mSubInductor =
@@ -268,24 +290,19 @@ void EMT::Ph3::Transformer::mnaCompApplySystemMatrixStamp(
                            mVirtualNodes[0]->matrixNodeIndex(PhaseType::C), 1.);
   }
   if (terminalNotGrounded(1)) {
-    Math::setMatrixElement(systemMatrix, matrixNodeIndex(1, 0),
-                           mVirtualNodes[1]->matrixNodeIndex(PhaseType::A),
-                           (**mRatio).real());
-    Math::setMatrixElement(systemMatrix, matrixNodeIndex(1, 1),
-                           mVirtualNodes[1]->matrixNodeIndex(PhaseType::B),
-                           (**mRatio).real());
-    Math::setMatrixElement(systemMatrix, matrixNodeIndex(1, 2),
-                           mVirtualNodes[1]->matrixNodeIndex(PhaseType::C),
-                           (**mRatio).real());
-    Math::setMatrixElement(systemMatrix,
-                           mVirtualNodes[1]->matrixNodeIndex(PhaseType::A),
-                           matrixNodeIndex(1, 0), -(**mRatio).real());
-    Math::setMatrixElement(systemMatrix,
-                           mVirtualNodes[1]->matrixNodeIndex(PhaseType::B),
-                           matrixNodeIndex(1, 1), -(**mRatio).real());
-    Math::setMatrixElement(systemMatrix,
-                           mVirtualNodes[1]->matrixNodeIndex(PhaseType::C),
-                           matrixNodeIndex(1, 2), -(**mRatio).real());
+    // loop through T matrix updating the system matrix 
+    for (int i = 0; i < 3; i++){
+      for (int j = 0; j < 3; j++){
+        if (mTurnsRatio(j, i) != 0.)
+          Math::setMatrixElement(systemMatrix, matrixNodeIndex(1, i),
+                                mVirtualNodes[1]->matrixNodeIndex(static_cast<PhaseType>(j)),
+                                mTurnsRatio(j, i));
+        if (mTurnsRatio(i,j) != 0.)
+          Math::setMatrixElement(systemMatrix, 
+                                mVirtualNodes[1]->matrixNodeIndex(static_cast<PhaseType>(i)),
+                                matrixNodeIndex(1,j), -mTurnsRatio(i,j));
+      }
+    }
   }
 
   // Add subcomps to system matrix
@@ -319,30 +336,6 @@ void EMT::Ph3::Transformer::mnaCompApplySystemMatrixStamp(
                        Logger::complexToString(Complex(1.0, 0)),
                        mVirtualNodes[1]->matrixNodeIndex(PhaseType::C),
                        mVirtualNodes[0]->matrixNodeIndex(PhaseType::C));
-  }
-  if (terminalNotGrounded(1)) {
-    SPDLOG_LOGGER_INFO(mSLog, "Add {:s} to system at ({:d},{:d})",
-                       Logger::complexToString(**mRatio), matrixNodeIndex(1, 0),
-                       mVirtualNodes[1]->matrixNodeIndex(PhaseType::A));
-    SPDLOG_LOGGER_INFO(mSLog, "Add {:s} to system at ({:d},{:d})",
-                       Logger::complexToString(**mRatio), matrixNodeIndex(1, 1),
-                       mVirtualNodes[1]->matrixNodeIndex(PhaseType::B));
-    SPDLOG_LOGGER_INFO(mSLog, "Add {:s} to system at ({:d},{:d})",
-                       Logger::complexToString(**mRatio), matrixNodeIndex(1, 2),
-                       mVirtualNodes[1]->matrixNodeIndex(PhaseType::C));
-
-    SPDLOG_LOGGER_INFO(mSLog, "Add {:s} to system at ({:d},{:d})",
-                       Logger::complexToString(-**mRatio),
-                       mVirtualNodes[1]->matrixNodeIndex(PhaseType::A),
-                       matrixNodeIndex(1, 0));
-    SPDLOG_LOGGER_INFO(mSLog, "Add {:s} to system at ({:d},{:d})",
-                       Logger::complexToString(-**mRatio),
-                       mVirtualNodes[1]->matrixNodeIndex(PhaseType::B),
-                       matrixNodeIndex(1, 1));
-    SPDLOG_LOGGER_INFO(mSLog, "Add {:s} to system at ({:d},{:d})",
-                       Logger::complexToString(-**mRatio),
-                       mVirtualNodes[1]->matrixNodeIndex(PhaseType::C),
-                       matrixNodeIndex(1, 2));
   }
 }
 

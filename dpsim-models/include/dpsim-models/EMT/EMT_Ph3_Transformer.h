@@ -23,7 +23,6 @@ class Transformer : public CompositePowerComp<Real>,
                     public SharedFactory<Transformer>,
                     public Base::Ph3::Transformer {
 private:
-  /// True after createSubComponents() runs; prevents double-construction.
   /// Internal resistor to model losses
   std::shared_ptr<EMT::Ph3::Resistor> mSubResistor;
   /// Internal inductor to model losses
@@ -46,6 +45,11 @@ private:
   Matrix mSnubberCapacitance1;
   /// Snubber capacitance 2
   Matrix mSnubberCapacitance2;
+  /// 3×3 real turns matrix T, v_vn0 = T·v_LV; built in createSubComponents()
+  Matrix mTurnsRatio; 
+  /// k0: true for wye-wye, false when either winding is delta
+  Bool mZeroSequencePassthrough = true; 
+
 
   /// Boolean for considering resistive losses with sub resistor
   Bool mWithResistiveLosses;
@@ -66,6 +70,10 @@ public:
   void setParameters(Real nomVoltageEnd1, Real nomVoltageEnd2, Real ratedPower,
                      Real ratioAbs, Real ratioPhase, Matrix resistance,
                      Matrix inductance);
+
+  /// Sets wheter zero-sequence passes through (k0=1). Set false if either winding is delta
+  /// It must be called before createSubComponents()
+  void setZeroSequencePassthrough(Bool passthrough) {mZeroSequencePassthrough = passthrough; }
   /// Constructs and registers MNA subcomponents; idempotent.
   void createSubComponents() override;
   /// Initializes component from power flow data
@@ -97,6 +105,8 @@ public:
                                    AttributeBase::List &attributeDependencies,
                                    AttributeBase::List &modifiedAttributes,
                                    Attribute<Matrix>::Ptr &leftVector) override;
+
+  
 };
 } // namespace Ph3
 } // namespace EMT

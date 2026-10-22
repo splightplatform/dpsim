@@ -100,6 +100,10 @@ void SP::Ph1::Transformer::createSubComponents() {
 
   // Switch terminals so that terminal 0 is always the higher-voltage side.
   if (Math::abs(**mRatio) < 1.) {
+    // refer the series impedance to the new terminal-0 side: Z' = Z / |a|²
+    Real ratioNormSq = std::norm(**mRatio); 
+    **mResistance /= ratioNormSq; 
+    **mInductance /= ratioNormSq; 
     **mRatio = 1. / **mRatio;
     mRatioAbs = std::abs(**mRatio);
     mRatioPhase = std::arg(**mRatio);
@@ -114,8 +118,12 @@ void SP::Ph1::Transformer::createSubComponents() {
     SPDLOG_LOGGER_INFO(
         mSLog, "Nominal Voltage End 1 = {} [V] Nominal Voltage End 2 = {} [V]",
         mNominalVoltageEnd1, mNominalVoltageEnd2);
-    SPDLOG_LOGGER_INFO(mSLog, "Tap Ratio = {} [ ] Phase Shift = {} [deg]",
+    SPDLOG_LOGGER_INFO(mSLog, "Tap Ratio = {} [ ] Phase Shift = {} [rad]",
                        mRatioAbs, mRatioPhase);
+    SPDLOG_LOGGER_INFO(mSLog,
+                       "Resistance (re-referred to new terminal 0) = {} [Ohm] "
+                       "Inductance = {} [H]",
+                       **mResistance, **mInductance);
     // Refresh index cache after terminal swap so pfApplyAdmittanceMatrixStamp uses the correct order.
     updateMatrixNodeIndices();
   }

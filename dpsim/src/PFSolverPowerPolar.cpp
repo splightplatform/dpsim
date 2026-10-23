@@ -703,6 +703,11 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
     CPS::Real qMaxPU, qMinPU, vSetPU;
     if (!busLimits(node, qMaxPU, qMinPU, vSetPU))
       continue;
+    // (Qmax == Qmin) so the generator can never regulate
+    // voltage, so keep it pinned instead of releasing it
+    constexpr CPS::Real kZeroQRangePU = 1e-6;
+    if (std::abs(qMaxPU - qMinPU) <= kZeroQRangePU)
+      continue;
     CPS::Real v = sol_V(node->matrixNodeIndex());
     if (atMax && v > vSetPU)
       toPV.push_back(node);

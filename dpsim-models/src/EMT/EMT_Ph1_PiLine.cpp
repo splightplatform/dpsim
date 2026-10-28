@@ -33,12 +33,6 @@ void EMT::Ph1::PiLine::createSubComponents() {
     return;
   mSubCompCreated = true;
 
-  // By default there is always a small conductance to ground to
-  // avoid problems with floating nodes.
-  Real defaultParallelCond = 1e-6;
-  **mParallelCond =
-      (**mParallelCond > 0) ? **mParallelCond : defaultParallelCond;
-
   // Create series sub components
   mSubSeriesResistor =
       std::make_shared<EMT::Ph1::Resistor>(**mName + "_res", mLogLevel);
@@ -57,23 +51,25 @@ void EMT::Ph1::PiLine::createSubComponents() {
                      MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT, true);
 
   // Create parallel sub components
-  mSubParallelResistor0 =
-      std::make_shared<EMT::Ph1::Resistor>(**mName + "_con0", mLogLevel);
-  mSubParallelResistor0->setParameters(2. / (**mParallelCond));
-  mSubParallelResistor0->connect(
-      SimNode::List{SimNode::GND, mTerminals[0]->node()});
-  addMNASubComponent(mSubParallelResistor0,
-                     MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT,
-                     MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT, false);
+  if (**mParallelCond > 0){
+    mSubParallelResistor0 =
+        std::make_shared<EMT::Ph1::Resistor>(**mName + "_con0", mLogLevel);
+    mSubParallelResistor0->setParameters(2. / (**mParallelCond));
+    mSubParallelResistor0->connect(
+        SimNode::List{SimNode::GND, mTerminals[0]->node()});
+    addMNASubComponent(mSubParallelResistor0,
+                      MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT,
+                      MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT, false);
 
-  mSubParallelResistor1 =
-      std::make_shared<EMT::Ph1::Resistor>(**mName + "_con1", mLogLevel);
-  mSubParallelResistor1->setParameters(2. / (**mParallelCond));
-  mSubParallelResistor1->connect(
-      SimNode::List{SimNode::GND, mTerminals[1]->node()});
-  addMNASubComponent(mSubParallelResistor1,
-                     MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT,
-                     MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT, false);
+    mSubParallelResistor1 =
+        std::make_shared<EMT::Ph1::Resistor>(**mName + "_con1", mLogLevel);
+    mSubParallelResistor1->setParameters(2. / (**mParallelCond));
+    mSubParallelResistor1->connect(
+        SimNode::List{SimNode::GND, mTerminals[1]->node()});
+    addMNASubComponent(mSubParallelResistor1,
+                      MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT,
+                      MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT, false);
+    }
 
   if ((**mParallelCap) > 0) {
     mSubParallelCapacitor0 =
@@ -183,8 +179,10 @@ void EMT::Ph1::PiLine::mnaCompUpdateCurrent(const Matrix &leftVector) {
 MNAInterface::List EMT::Ph1::PiLine::mnaTearGroundComponents() {
   MNAInterface::List gndComponents;
 
-  gndComponents.push_back(mSubParallelResistor0);
-  gndComponents.push_back(mSubParallelResistor1);
+  if ((**mParallelCond) > 0) {
+    gndComponents.push_back(mSubParallelResistor0);
+    gndComponents.push_back(mSubParallelResistor1);
+  }
 
   if ((**mParallelCap) > 0) {
     gndComponents.push_back(mSubParallelCapacitor0);

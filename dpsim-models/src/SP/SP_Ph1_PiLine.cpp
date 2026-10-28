@@ -40,32 +40,11 @@ void SP::Ph1::PiLine::setParameters(Real resistance, Real inductance,
   SPDLOG_LOGGER_INFO(mSLog, "Resistance={} [Ohm] Inductance={} [H]",
                      **mSeriesRes, **mSeriesInd);
 
-  if (capacitance > 0) {
-    **mParallelCap = capacitance;
-    mParallelCapIsFallback = false;
-  } else {
-    **mParallelCap = 1e-12;
-    mParallelCapIsFallback = true;
-    SPDLOG_LOGGER_WARN(
-        mSLog, "Zero value for Capacitance, setting default value of C={} [F]",
-        **mParallelCap);
-  }
-  if (conductance > 0) {
-    **mParallelCond = conductance;
-    mParallelCondIsFallback = false;
-  } else {
-    if (mBehaviour == Behaviour::Initialization)
-      **mParallelCond =
-          (conductance >= 0)
-              ? conductance
-              : 1e-6; // init mode for initFromPowerFlow of mna system components
-    else
-      **mParallelCond = (conductance > 0) ? conductance : 1e-6;
-    mParallelCondIsFallback = true;
-    SPDLOG_LOGGER_WARN(
-        mSLog, "Zero value for Conductance, setting default value of G={} [S]",
-        **mParallelCond);
-  }
+  // negative values are treated as no shunt
+  **mParallelCond = (conductance >= 0) ? conductance : 0;
+  // handle potential negative capacitance
+  **mParallelCap = (capacitance >= 0) ? capacitance : 0;
+
   SPDLOG_LOGGER_INFO(mSLog, "Capacitance={} [F] Conductance={} [S]",
                      **mParallelCap, **mParallelCond);
   mSLog->flush();
@@ -122,25 +101,16 @@ void SP::Ph1::PiLine::pfApplyAdmittanceMatrixStamp(SparseMatrixCompRow &Y) {
   int bus1 = this->matrixNodeIndex(0);
   int bus2 = this->matrixNodeIndex(1);
 
-  // Exclude MNA-conditioning fallback shunt from standalone PF, keep it for Initialization
-  Real parallelCondPerUnit =
-      (mBehaviour == Behaviour::PFSimulation && mParallelCondIsFallback)
-          ? 0.
-          : mParallelCondPerUnit;
-  Real parallelCapPerUnit =
-      (mBehaviour == Behaviour::PFSimulation && mParallelCapIsFallback)
-          ? 0.
-          : mParallelCapPerUnit;
 
   //create the element admittance matrix
   Complex y =
       Complex(1, 0) / Complex(mSeriesResPerUnit, 1. * mSeriesIndPerUnit);
   Complex ys =
-      Complex(parallelCondPerUnit, 1. * parallelCapPerUnit) / Complex(2, 0);
+      Complex(mParallelCondPerUnit, 1. * mParallelCapPerUnit) / Complex(2, 0); 
 
   //Fill the internal matrix
   mY_element = MatrixComp(2, 2);
-  mY_element(0, 0) = y + ys;
+  mY_element(0, 0) = y + ys ;
   mY_element(0, 1) = -y;
   mY_element(1, 0) = -y;
   mY_element(1, 1) = y + ys;
@@ -187,10 +157,6 @@ void SP::Ph1::PiLine::createSubComponents() {
     return;
   mSubCompCreated = true;
 
-  // By default there is always a small conductance to ground to
-  // avoid problems with floating nodes.
-  **mParallelCond = (**mParallelCond >= 0) ? **mParallelCond : 1e-6;
-
   // Create series sub components
   mSubSeriesResistor =
       std::make_shared<SP::Ph1::Resistor>(**mName + "_res", mLogLevel);
@@ -207,7 +173,7 @@ void SP::Ph1::PiLine::createSubComponents() {
                      MNA_SUBCOMP_TASK_ORDER::TASK_BEFORE_PARENT, true);
 
   // Create parallel sub components
-  if (**mParallelCond >= 0) {
+  if (**mParallelCond > 0) {
     mSubParallelResistor0 =
         std::make_shared<SP::Ph1::Resistor>(**mName + "_con0", mLogLevel);
     mSubParallelResistor0->setParameters(2. / **mParallelCond);
@@ -305,8 +271,10 @@ void SP::Ph1::PiLine::mnaCompUpdateCurrent(const Matrix &leftVector) {
 MNAInterface::List SP::Ph1::PiLine::mnaTearGroundComponents() {
   MNAInterface::List gndComponents;
 
-  gndComponents.push_back(mSubParallelResistor0);
-  gndComponents.push_back(mSubParallelResistor1);
+  if (**mParallelCond > 0){
+    gndComponents.push_back(mSubParallelResistor0);
+    gndComponents.push_back(mSubParallelResistor1);
+  }
 
   if (**mParallelCap > 0) {
     gndComponents.push_back(mSubParallelCapacitor0);

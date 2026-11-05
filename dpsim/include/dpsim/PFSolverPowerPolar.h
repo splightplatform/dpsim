@@ -48,6 +48,13 @@ protected:
   CPS::UInt mMaxNonImprovingSteps = 8; 
   CPS::Real mBlowUpFactor = 10.0; 
 
+  /// Divide each PQ bus's mismatch rows by |V| (current balance) instead of power balance
+  CPS::Bool mCurrentBalanceRows = true;
+  /// Largest angle step [rad] after whole-step scaling
+  CPS::Real mDThetaLimit = 0.2;
+  /// Largest relative voltage step dV/V after whole-step scaling
+  CPS::Real mDVLimit = 0.1;
+
   // Remote bus regulation
   CPS::Real busVoltageMagnitude(CPS::UInt busIdx) override { return sol_V(busIdx); }
   void setBusVoltageMagnitude(CPS::UInt busIdx, CPS::Real value) override { sol_V(busIdx) = value; }
@@ -119,5 +126,12 @@ public:
                      CPS::Real timeStep, CPS::Logger::Level logLevel);
   ///
   virtual ~PFSolverPowerPolar(){};
+
+  /// Use current-balance rows for PQ buses (true) or plain power-balance rows (false)
+  void setCurrentBalanceRows(CPS::Bool value) { mCurrentBalanceRows = value; }
+  /// Largest angle step [rad] per Newton iteration
+  void setDThetaLimit(CPS::Real value) { mDThetaLimit = value; }
+  /// Largest relative voltage step dV/V per Newton iteration
+  void setDVLimit(CPS::Real value) { mDVLimit = value; }
 };
 } // namespace DPsim

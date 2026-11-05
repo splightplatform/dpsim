@@ -194,13 +194,23 @@ void PFSolverPowerPolar::calculateMismatch() {
   mF.setZero();
 
   for (UInt a = 0; a < npqpv; ++a) {
-    // For PQ and PV buses calculate active power mismatch
     k = mPQPVBusIndices[a];
-    mF(a) = Pesp.coeff(k) - P(k);
-
-    //only for PQ buses calculate reactive power mismatch
-    if (a < mNumPQBuses)
-      mF(a + npqpv) = Qesp.coeff(k) - Q(k);
+    Real pMismatch = Pesp.coeff(k) - P(k);
+    // only for PQ buses calculate reactive power mismatch
+    if (a < mNumPQBuses) {
+      Real qMismatch = Qesp.coeff(k) - Q(k);
+      Real voltage = sol_V(k);
+      // current-balance rows: divide by V so V = 0 is no longer a root
+      Bool scaleRow = mCurrentBalanceRows && voltage > 0.0;
+      if (mCurrentBalanceRows && !scaleRow)
+        SPDLOG_LOGGER_WARN(mSLog, "bus {}: V = {} <= 0, using power-balance rows",
+                           k, voltage);
+      mF(a) = scaleRow ? pMismatch / voltage : pMismatch;
+      mF(a + npqpv) = scaleRow ? qMismatch / voltage : qMismatch;
+    } else {
+      // For PV buses calculate active power mismatch (no scaling)
+      mF(a) = pMismatch;
+    }
   }
 }
 
@@ -304,6 +314,21 @@ void PFSolverPowerPolar::calculateJacobian() {
       }
     }
   }
+  // Current-balance rows: d(F/V) = dF/V in every column, plus F/V in the bus's
+  // own V*d/dV column. Needs mF to already hold the scaled mismatch at this point.
+  if (mCurrentBalanceRows) {
+    for (UInt a = 0; a < mNumPQBuses; ++a) {
+      k = mPQPVBusIndices[a];
+      Real voltage = sol_V(k);
+      // same condition as calculateMismatch, so rows and Jacobian stay consistent
+      if (voltage <= 0.0)
+        continue;
+      mJ.row(a) /= voltage;
+      mJ.row(a + npqpv) /= voltage;
+      mJ(a, a + npqpv) += mF(a);
+      mJ(a + npqpv, a + npqpv) += mF(a + npqpv);
+    }
+  }
 }
 
 Bool PFSolverPowerPolar::updateSolution() {
@@ -312,12 +337,10 @@ Bool PFSolverPowerPolar::updateSolution() {
   CPS::Vector sol_V_prev = sol_V;
   CPS::Vector sol_D_prev = sol_D;
   Real prevMismatchNorm = mF.norm();
-  const Real dThetaLimit = 0.2; 
-  const Real dVLimit = 0.1; 
   
   const Real maxDTheta = mX.head(npqpv).cwiseAbs().maxCoeff(); 
   const Real maxDV = mNumPQBuses > 0 ? mX.segment(npqpv, mNumPQBuses).cwiseAbs().maxCoeff() : 0; 
-  const Real alpha = std::min({1.0, dThetaLimit / maxDTheta, dVLimit / maxDV}); 
+  const Real alpha = std::min({1.0, mDThetaLimit / maxDTheta, mDVLimit / maxDV}); 
   CPS::Vector step = alpha * mX; 
   
   const std::array<Real, 8> scales = {1.5, 1.0, 1.0/2.0, 1.0/4.0, 1.0/8.0, 1.0/16.0, 1.0/32.0, 1.0/64.0}; 

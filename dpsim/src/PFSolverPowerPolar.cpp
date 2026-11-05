@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <tuple>
+#include <array>
 
 #include <dpsim/PFSolverPowerPolar.h>
 
@@ -310,73 +311,94 @@ Bool PFSolverPowerPolar::updateSolution() {
 
   CPS::Vector sol_V_prev = sol_V;
   CPS::Vector sol_D_prev = sol_D;
-  CPS::Vector mF_prev = mF; 
   Real prevMismatchNorm = mF.norm();
-  Real bestNorm = prevMismatchNorm; 
-  CPS::Vector step = mX; // vector of individual steps for buses
+  const Real dThetaLimit = 0.2; 
+  const Real dVLimit = 0.1; 
   
-  const double maxDVpu = 0.1;
-  const double maxDThetaRad = 0.2;
-  UInt nClamped = 0; 
+  const Real maxDTheta = mX.head(npqpv).cwiseAbs().maxCoeff(); 
+  const Real maxDV = mNumPQBuses > 0 ? mX.segment(npqpv, mNumPQBuses).cwiseAbs().maxCoeff() : 0; 
+  const Real alpha = std::min({1.0, dThetaLimit / maxDTheta, dVLimit / maxDV}); 
+  CPS::Vector step = alpha * mX; 
   
-  // Use clampled scales rather than one base scale
-  // Δθ_k ← clamp(Δθ_k, −0.2, +0.2)        for every PQ and PV bus
-  for (UInt a = 0; a < npqpv; ++a) {
-    step(a) = std::clamp(mX.coeff(a), -maxDThetaRad, maxDThetaRad); 
-    if (step(a) != mX.coeff(a)) ++nClamped;
-  }
-  
-  // ΔV_k/V_k ← clamp(ΔV_k/V_k, −0.1, +0.1) for every PQ bus
-  for (UInt b = 0; b < mNumPQBuses; ++b) {
-    step(npqpv + b) = std::clamp(mX.coeff(npqpv + b), -maxDVpu, maxDVpu); 
-    if (step(npqpv + b) != mX.coeff(npqpv + b)) ++nClamped; 
-  }
-  
-  double scale = 1.0; 
-  const int maxBacktracks = 6;
-  Bool improved = false;
-  for (int attempt = 0; attempt <= maxBacktracks; ++attempt) {
-    for (UInt a = 0; a < npqpv; ++a) {
-      UInt k = mPQPVBusIndices[a];
-      sol_D(k) = sol_D_prev(k) + scale * step(a);
+  const std::array<Real, 8> scales = {1.5, 1.0, 1.0/2.0, 1.0/4.0, 1.0/8.0, 1.0/16.0, 1.0/32.0, 1.0/64.0}; 
+  size_t bestScaleIdx = 0; 
+  Real lowestError = std::numeric_limits<Real>::infinity(); 
+
+  // lambda for applying a step @ a particular scale
+  auto trialNorm = [&](Real scale) -> Real {
+    for (UInt a = 0; a < npqpv; ++a){
+      UInt k = mPQPVBusIndices[a]; 
+      // calc new angle for every bus 
+      sol_D(k) = sol_D_prev(k) + scale * step(a); 
+      // calc new V if a PQ bus 
       if (a < mNumPQBuses)
-        sol_V(k) = sol_V_prev(k) * (1.0 + scale * step(a + npqpv));
-      
-    }
-    for (auto node : mSystem.mNodes) {
-      UInt idx = node->matrixNodeIndex();
-      sol_V_complex(idx) = Math::polar(sol_V(idx), sol_D(idx));
+        sol_V(k) = sol_V_prev(k) * (1.0 + scale * step(a + npqpv)); 
     }
 
-    calculateMismatch();
-    bestNorm = std::min(bestNorm, mF.norm()); 
-
-    if (mF.norm() <= 0.99 * prevMismatchNorm){
-      improved = true; 
-      break;
+    // update sol_V_complex to use new values because calculateMismatch() uses it
+    for (auto node : mSystem.mNodes){
+      UInt idx = node->matrixNodeIndex(); 
+      sol_V_complex(idx) = Math::polar(sol_V(idx), sol_D(idx)); 
     }
-    scale *= 0.5;
-  }
-  if (!improved){ 
-    // restore old values 
-    sol_V = sol_V_prev; 
-    sol_D = sol_D_prev; 
-    mF = mF_prev; 
+    calculateMismatch(); 
+    return mF.norm(); 
+  }; 
 
-    // rebuild sol_V_complex
-    for (auto node : mSystem.mNodes) {
-      UInt idx = node->matrixNodeIndex();
-      sol_V_complex(idx) = Math::polar(sol_V(idx), sol_D(idx));
+  for (size_t scaleIdx = 0; scaleIdx < scales.size(); scaleIdx++){
+    Real error = trialNorm(scales[scaleIdx]); 
+    if (error < lowestError) {
+      bestScaleIdx = scaleIdx; 
+      lowestError = error; 
     }
-
-    // warn 
-    SPDLOG_LOGGER_WARN(mSLog, "line search: no step improved |F| (prev={}, best={}, minScale={}); restoring previous state",
-                   prevMismatchNorm, bestNorm, 2 * scale);
-    return false; 
   }
 
-  SPDLOG_LOGGER_INFO(mSLog, "step: {} entries clamped, accepted scale {}", nClamped, scale);
-  return true;
+  if (std::isfinite(lowestError)){
+    trialNorm(scales[bestScaleIdx]); 
+    SPDLOG_LOGGER_INFO(mSLog, "step: alpha {}, scale {}, |F| {} -> {}", alpha, scales[bestScaleIdx], prevMismatchNorm, lowestError);
+    mNumNonImprovingSteps = (lowestError < prevMismatchNorm) ? 0 : mNumNonImprovingSteps + 1; 
+    if (lowestError < mBestRunNorm){
+      mBestRunV = sol_V; 
+      mBestRunD = sol_D; 
+      mBestRunNorm = lowestError; 
+    }
+    if (mNumNonImprovingSteps > mMaxNonImprovingSteps || lowestError > mBlowUpFactor * mBestRunNorm){
+      SPDLOG_LOGGER_WARN(mSLog,
+                         "watchdog: stopping run ({}); |F| {}, best {}, non-improving streak {}/{}",
+                         mNumNonImprovingSteps > mMaxNonImprovingSteps ? "no improvement" : "blow-up",
+                         lowestError, mBestRunNorm, mNumNonImprovingSteps, mMaxNonImprovingSteps);
+      return false;
+    }
+    return true; 
+  } 
+  trialNorm(0.0);  // reset to previous state
+  SPDLOG_LOGGER_WARN(mSLog, "step: no sample gave a finite |F| (alpha {}); restoring previous state", alpha);
+  return false; 
+
+}
+
+void PFSolverPowerPolar::startNewtonRun(){
+  // store initial best values 
+  mBestRunV = sol_V; 
+  mBestRunD = sol_D; 
+  mBestRunNorm = mF.norm(); 
+  mNumNonImprovingSteps = 0; 
+}
+
+void PFSolverPowerPolar::finishNewtonRun(){
+  // if the loadflow did not converge and the best if below the current norm
+  // then restore the system back to the best V and D
+  Real finalNorm = mF.norm();
+  if(!isConverged && mBestRunNorm < finalNorm){
+    sol_V = mBestRunV; 
+    sol_D = mBestRunD; 
+    // update sol_V_complex to use new values because calculateMismatch() uses it
+    for (auto node : mSystem.mNodes){
+      UInt idx = node->matrixNodeIndex(); 
+      sol_V_complex(idx) = Math::polar(sol_V(idx), sol_D(idx)); 
+    }
+    calculateMismatch(); 
+    SPDLOG_LOGGER_WARN(mSLog, "run did not converge; restoring best iterate (|F| {} -> {})", finalNorm, mF.norm());
+  }
 }
 
 void PFSolverPowerPolar::setSolution() {

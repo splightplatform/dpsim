@@ -644,6 +644,7 @@ Bool PFSolver::runNewtonRaphson(const CPS::String &label) {
 
   // Calculate the mismatch according to the initial solution
   calculateMismatch();
+  startNewtonRun();
   reportProgress(label, 0); 
 
   // Check whether model already converged
@@ -659,7 +660,7 @@ Bool PFSolver::runNewtonRaphson(const CPS::String &label) {
     // Calculate new solution based on mX increments obtained from equation system
     if (!updateSolution()) {
       mIterations = i;
-      SPDLOG_LOGGER_WARN(mSLog, "line search failed at iter {}; stopping run [{}]", i, label);
+      SPDLOG_LOGGER_WARN(mSLog, "step rule stopped run at iter {}", i);
       reportProgress(label, i); 
       break;
     }
@@ -676,6 +677,7 @@ Bool PFSolver::runNewtonRaphson(const CPS::String &label) {
     isConverged = checkConvergence();
     mIterations = i;
   }
+  finishNewtonRun(); 
   mTotalIterations += mIterations;
   SPDLOG_LOGGER_INFO(mSLog, "<<< runNewtonRaphson end [{}] converged={} iters={}",
                      label, isConverged, mIterations);

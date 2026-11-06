@@ -9,6 +9,7 @@
 #pragma once
 
 #include <map>
+#include <set>
 #include <limits>
 
 #include <dpsim/PFSolver.h>
@@ -121,6 +122,8 @@ protected:
   std::map<CPS::TopologicalNode::Ptr, bool> mQLimitConvertedAtMax;
   /// Total PV<->PQ switches per bus over the solve (anti-oscillation cap)
   std::map<CPS::TopologicalNode::Ptr, CPS::UInt> mQLimitSwitchCount;
+  /// Pinned buses whose release was blocked by the switch cap (warned once each)
+  std::set<CPS::TopologicalNode::Ptr> mQLimitReleaseBlocked;
   /// Calculate complex power flowing from this node to the other nodes
   void calculatePAndQInjectionPQBuses();
   /// Calculate branch flows from current solution and store them in line and transformer components

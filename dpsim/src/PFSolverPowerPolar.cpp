@@ -748,8 +748,7 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
 
   // PV -> PQ: voltage-controlling generators that hit a reactive limit.
   for (auto node : mPVBuses) {
-    if (frozen(node))
-      continue;
+    // checked even at the switch cap, so a unit never stays past its Q limit
     CPS::Real qMaxPU, qMinPU, vSetPU;
     if (!busLimits(node, qMaxPU, qMinPU, vSetPU))
       continue;
@@ -760,20 +759,10 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
       toPQ.emplace_back(node, false, qMinPU, qMinPU - qGen);
   }
 
-  // optionally switch only the worst violators this pass
-  if (mMaxQLimitSwitchesPerPass > 0 && toPQ.size() > mMaxQLimitSwitchesPerPass) {
-    std::sort(toPQ.begin(), toPQ.end(), [](const auto &l, const auto &r) {
-      return std::get<3>(l) > std::get<3>(r);
-    });
-    toPQ.resize(mMaxQLimitSwitchesPerPass);
-  }
-
   // PQ -> PV: pinned generators whose constraint is no longer binding.
   for (auto &kv : mQLimitConvertedAtMax) {
     auto node = kv.first;
     bool atMax = kv.second;
-    if (frozen(node))
-      continue;
     CPS::Real qMaxPU, qMinPU, vSetPU;
     if (!busLimits(node, qMaxPU, qMinPU, vSetPU))
       continue;
@@ -791,10 +780,18 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
       v = sol_V(remote->second);
       vTarget = mRegulatedVSetPU[genIdx];
     }
-    if (atMax && v > vTarget)
+    if ((atMax && v > vTarget) || (!atMax && v < vTarget)) {
+      // at the switch cap the unit stays pinned at its limit
+      if (frozen(node)) {
+        if (mQLimitReleaseBlocked.insert(node).second)
+          SPDLOG_LOGGER_WARN(mSLog,
+                             "Q-limit: bus {} would release from {} (V {:.6f}, "
+                             "target {:.6f}) but is at the switch cap; kept pinned",
+                             node->name(), atMax ? "Qmax" : "Qmin", v, vTarget);
+        continue;
+      }
       toPV.push_back(node);
-    else if (!atMax && v < vTarget)
-      toPV.push_back(node);
+    }
   }
 
   // apply every switch of this pass at once
@@ -811,9 +808,11 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
     mPQBuses.push_back(node);
     mQLimitConvertedAtMax[node] = atMax;
     if (++mQLimitSwitchCount[node] >= mMaxQLimitSwitchesPerBus)
-      SPDLOG_LOGGER_WARN(
-          mSLog, "Q-limit: bus {} frozen at {} after {} switches", node->name(),
-          atMax ? "Qmax" : "Qmin", mQLimitSwitchCount[node]);
+      SPDLOG_LOGGER_WARN(mSLog,
+                         "Q-limit: PV bus {} -> PQ pinned at {} (violation {:.4f} "
+                         "pu); frozen there after {} switches",
+                         node->name(), atMax ? "Qmax" : "Qmin", std::get<3>(c),
+                         mQLimitSwitchCount[node]);
     else
       SPDLOG_LOGGER_INFO(mSLog, "Q-limit: PV bus {} -> PQ pinned at {} (violation {:.4f} pu)",
                          node->name(), atMax ? "Qmax" : "Qmin", std::get<3>(c));
@@ -844,9 +843,14 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
         "Q-limit: PQ bus {} -> PV, voltage snapped {:.6f} -> {:.6f} ({:+.2f}%)",
         node->name(), vBefore, vSnap, (vSnap - vBefore) / vBefore * 100.0);
     mQLimitConvertedAtMax.erase(node);
-    ++mQLimitSwitchCount[node];
-    SPDLOG_LOGGER_INFO(mSLog, "Q-limit: PQ bus {} -> PV (constraint relaxed)",
-                       node->name());
+    if (++mQLimitSwitchCount[node] >= mMaxQLimitSwitchesPerBus)
+      SPDLOG_LOGGER_WARN(mSLog,
+                         "Q-limit: PQ bus {} -> PV at the switch cap ({} "
+                         "switches); if pinned again it stays pinned",
+                         node->name(), mQLimitSwitchCount[node]);
+    else
+      SPDLOG_LOGGER_INFO(mSLog, "Q-limit: PQ bus {} -> PV (constraint relaxed)",
+                         node->name());
   }
 
   for (auto n : mSystem.mNodes) {
@@ -862,6 +866,7 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
 void PFSolverPowerPolar::clearReactiveLimitState() {
   mQLimitConvertedAtMax.clear();
   mQLimitSwitchCount.clear();
+  mQLimitReleaseBlocked.clear();
 }
 
 void PFSolverPowerPolar::calculatePAndQInjectionPQBuses() {

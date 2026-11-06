@@ -164,8 +164,6 @@ protected:
   CPS::UInt mMaxOuterIterations = 10;
   /// Maximum number of PV<->PQ switches per bus before it is frozen (anti-oscillation)
   CPS::UInt mMaxQLimitSwitchesPerBus = 2;
-  /// Maximum PV->PQ switches per Q-limit pass, worst violators first; 0 = no cap
-  CPS::UInt mMaxQLimitSwitchesPerPass = 0;
   /// Relative tolerance for non-authoritative (e.g. Load) base-voltage candidates vs. the zone's rating
   CPS::Real mBaseVoltageLooseTolerance = 0.1;
   /// Relative tolerance between authoritative base-voltage sources (generator/transformer/network-injection/VSI) within a zone
@@ -305,11 +303,6 @@ public:
   /// Enable generator reactive-limit enforcement (PV<->PQ outer loop)
   void setEnforceReactiveLimits(CPS::Bool value) {
     mEnforceReactiveLimits = value;
-  }
-
-  /// Cap PV->PQ switches per Q-limit pass to the worst violators; 0 = no cap
-  void setMaxQLimitSwitchesPerPass(CPS::UInt maxSwitches) {
-    mMaxQLimitSwitchesPerPass = maxSwitches;
   }
 
   /// Raise for grids with legitimate large voltage drop (e.g. untapped feeders)

@@ -358,6 +358,21 @@ void PFSolver::resetToOriginalClassification() {
   reclassifyBuses();
 }
 
+void PFSolver::saveOperatingPoint() {
+  mSavedOperatingPoint.pqBuses = mPQBuses;
+  mSavedOperatingPoint.pvBuses = mPVBuses;
+  mSavedOperatingPoint.localVSet = mLocalVSetOverride;
+  mSavedOperatingPoint.converged = isConverged;
+}
+
+void PFSolver::restoreOperatingPoint() {
+  mPQBuses = mSavedOperatingPoint.pqBuses;
+  mPVBuses = mSavedOperatingPoint.pvBuses;
+  mLocalVSetOverride = mSavedOperatingPoint.localVSet;
+  isConverged = mSavedOperatingPoint.converged;
+  reclassifyBuses();
+}
+
 void PFSolver::reclassifyBuses() {
   // Re-derive index vectors and resize storage; sol_V/sol_D carry over as a warm start.
   rebuildBusIndexAggregates();
@@ -854,6 +869,8 @@ Bool PFSolver::resolveRemoteRegulationBatch() {
   UInt solves = 0;
   // Whether the last Q-limit re-check found nothing more to switch
   Bool qLimitsSettled = true;
+  // the base solve converged so it is the first good operating point
+  saveOperatingPoint();
 
   for (UInt pass = 1; pass <= mMaxRemoteRegBatchPasses; ++pass) {
     UInt nMoving = 0, nInTol = 0, nPinned = 0, nBound = 0, nHeld = 0;
@@ -980,8 +997,7 @@ Bool PFSolver::resolveRemoteRegulationBatch() {
     }
     if (!solved) {
       // put the setpoints back and return to the last good operating point
-      applyMoves(0.0);
-      runNewtonRaphson("remote regulation restore");
+      restoreOperatingPoint();
       SPDLOG_LOGGER_WARN(mSLog, "Remote regulation pass {}: solve failed after {} "
                                 "retries; setpoints restored",
                          pass, kMaxRetries);
@@ -999,6 +1015,7 @@ Bool PFSolver::resolveRemoteRegulationBatch() {
       if (s >= mRemoteRegSensitivityMin && s <= mRemoteRegSensitivityMax)
         st.sensitivity = s;
     }
+    saveOperatingPoint();
 
     // 4. The moves change reactive output: re-check limits and re-solve if anything switched
     if (mEnforceReactiveLimits) {
@@ -1011,11 +1028,15 @@ Bool PFSolver::resolveRemoteRegulationBatch() {
         reclassifyBuses();
         ++solves;
         if (!runNewtonRaphson("remote regulation Q-limit")) {
+          // report the last converged point, not the failed iterate
+          restoreOperatingPoint();
           SPDLOG_LOGGER_WARN(mSLog, "Remote regulation pass {}: Q-limit re-solve "
-                                    "failed",
-                             pass);
+                                    "failed; restored the last good operating "
+                                    "point (|F| {:.3e})",
+                             pass, mF.norm());
           return false;
         }
+        saveOperatingPoint();
       }
     }
   }

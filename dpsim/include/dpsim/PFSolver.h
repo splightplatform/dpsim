@@ -66,8 +66,19 @@ protected:
 
   /// Drive local PV setpoints so remote-regulated buses reach their target voltage
   Bool resolveRemoteRegulation();
-  /// Batch variant: move every group at once, one warm Newton solve per pass
+  /// Batch variant, move every group at once, one Newton solve per pass
   Bool resolveRemoteRegulationBatch();
+  /// Last good operating point of the batch loop: bus classification and setpoints
+  struct OperatingPoint {
+    CPS::TopologicalNode::List pqBuses;
+    CPS::TopologicalNode::List pvBuses;
+    std::map<CPS::UInt, CPS::Real> localVSet;
+    CPS::Bool converged = false;
+  } mSavedOperatingPoint;
+  /// Save the present operating point; subclasses add their solution state
+  virtual void saveOperatingPoint();
+  /// Return to the saved operating point and rebuild the system for it
+  virtual void restoreOperatingPoint();
   /// Current solved |V| at a bus, in the solver's own representation.
   virtual CPS::Real busVoltageMagnitude(CPS::UInt busIdx) = 0;
   virtual void setBusVoltageMagnitude(CPS::UInt busIdx, CPS::Real value) = 0;

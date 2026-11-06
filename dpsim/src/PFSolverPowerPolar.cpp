@@ -424,6 +424,35 @@ void PFSolverPowerPolar::finishNewtonRun(){
   }
 }
 
+void PFSolverPowerPolar::saveOperatingPoint() {
+  PFSolver::saveOperatingPoint();
+  mSavedV = sol_V;
+  mSavedD = sol_D;
+  mSavedP = sol_P;
+  mSavedQ = sol_Q;
+  mSavedPesp = Pesp;
+  mSavedQesp = Qesp;
+  mSavedQLimitConvertedAtMax = mQLimitConvertedAtMax;
+  mSavedQLimitSwitchCount = mQLimitSwitchCount;
+}
+
+void PFSolverPowerPolar::restoreOperatingPoint() {
+  PFSolver::restoreOperatingPoint();
+  sol_V = mSavedV;
+  sol_D = mSavedD;
+  sol_P = mSavedP;
+  sol_Q = mSavedQ;
+  Pesp = mSavedPesp;
+  Qesp = mSavedQesp;
+  mQLimitConvertedAtMax = mSavedQLimitConvertedAtMax;
+  mQLimitSwitchCount = mSavedQLimitSwitchCount;
+  for (auto node : mSystem.mNodes) {
+    UInt idx = node->matrixNodeIndex();
+    sol_V_complex(idx) = Math::polar(sol_V(idx), sol_D(idx));
+  }
+  calculateMismatch();
+}
+
 void PFSolverPowerPolar::setSolution() {
 
   if (!mSolveSucceeded) {
@@ -802,12 +831,14 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
     CPS::Real qMaxPU, qMinPU, vSetPU;
     busLimits(node, qMaxPU, qMinPU, vSetPU);
     UInt genIdx = node->matrixNodeIndex();
-    // A remote regulator goes back to its current terminal setpoint, not to
-    // V_set_pu, which for it is the remote target
-    auto localSet = mLocalVSetOverride.find(genIdx);
-    CPS::Real vSnap =
-        localSet != mLocalVSetOverride.end() ? localSet->second : vSetPU;
     CPS::Real vBefore = sol_V(genIdx);
+    // A remote regulator keeps its present terminal voltage (within the setpoint
+    // bounds) as its new setpoint, so releasing it doesn't make voltage jump
+    CPS::Real vSnap = vSetPU;
+    if (mRegulatedBusOfGen.count(genIdx)) {
+      vSnap = std::clamp(vBefore, mRemoteRegVSetMin, mRemoteRegVSetMax);
+      mLocalVSetOverride[genIdx] = vSnap;
+    }
     sol_V(genIdx) = vSnap;
     SPDLOG_LOGGER_INFO(mSLog,
         "Q-limit: PQ bus {} -> PV, voltage snapped {:.6f} -> {:.6f} ({:+.2f}%)",

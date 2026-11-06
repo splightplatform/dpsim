@@ -786,8 +786,11 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
       // lets the cap block a release only when the miss is tiny, real oscillation
       if (frozen(node) && miss < mQLimitReleaseMargin) {
         if (mQLimitReleaseBlocked.insert(node).second)
-          SPDLOG_LOGGER_WARN(mSLog, "... at the switch cap; miss {:.2e} pu below the "
-                                    "release margin, kept pinned", ..., miss);
+          SPDLOG_LOGGER_WARN(mSLog,
+                   "Q-limit: bus {} would release from {} (V {:.6f}, target "
+                   "{:.6f}, miss {:.2e} pu) but is at the switch cap and below "
+                   "the release margin; kept pinned",
+                   node->name(), atMax ? "Qmax" : "Qmin", v, vTarget, miss);
         continue;
       }
       toPV.push_back(node);

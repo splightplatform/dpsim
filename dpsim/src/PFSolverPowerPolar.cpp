@@ -737,10 +737,9 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
     return hasGen && anyFinite;
   };
 
-  auto frozen = [&](CPS::TopologicalNode::Ptr node) {
+  auto switchCount = [&](CPS::TopologicalNode::Ptr node) -> CPS::UInt {
     auto it = mQLimitSwitchCount.find(node);
-    return it != mQLimitSwitchCount.end() &&
-           it->second >= mMaxQLimitSwitchesPerBus;
+    return it != mQLimitSwitchCount.end() ? it->second : 0;
   };
 
   // node, pinned at Qmax?, Q limit [pu], violation beyond the limit [pu]
@@ -754,9 +753,11 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
     if (!busLimits(node, qMaxPU, qMinPU, vSetPU))
       continue;
     CPS::Real qGen = generatorReactivePowerPerUnit(node);
-    if (CPS::Math::isFinite(qMaxPU) && qGen > qMaxPU)
+    // a unit released at its limit stays PV, so the batch loop can move its
+    // setpoint off the limit instead of pinning it again on rounding noise
+    if (CPS::Math::isFinite(qMaxPU) && qGen > qMaxPU + mQLimitPinTolerance)
       toPQ.emplace_back(node, true, qMaxPU, qGen - qMaxPU);
-    else if (CPS::Math::isFinite(qMinPU) && qGen < qMinPU)
+    else if (CPS::Math::isFinite(qMinPU) && qGen < qMinPU - mQLimitPinTolerance)
       toPQ.emplace_back(node, false, qMinPU, qMinPU - qGen);
   }
 
@@ -783,14 +784,20 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
     }
     if ((atMax && v > vTarget) || (!atMax && v < vTarget)) {
       CPS::Real miss = std::abs(v - vTarget);
-      // lets the cap block a release only when the miss is tiny, real oscillation
-      if (frozen(node) && miss < mQLimitReleaseMargin) {
+      CPS::UInt count = switchCount(node);
+      // past the hard cap every release is blocked; past the soft cap only a
+      // marginal one (a tiny miss is the signature of real oscillation)
+      Bool hardBlocked = count >= mMaxQLimitSwitchesPerBusHard;
+      Bool marginalBlocked =
+          count >= mMaxQLimitSwitchesPerBus && miss < mQLimitReleaseMargin;
+      if (hardBlocked || marginalBlocked) {
         if (mQLimitReleaseBlocked.insert(node).second)
           SPDLOG_LOGGER_WARN(mSLog,
                    "Q-limit: bus {} would release from {} (V {:.6f}, target "
-                   "{:.6f}, miss {:.2e} pu) but is at the switch cap and below "
-                   "the release margin; kept pinned",
-                   node->name(), atMax ? "Qmax" : "Qmin", v, vTarget, miss);
+                   "{:.6f}, miss {:.2e} pu) but is {}; kept pinned",
+                   node->name(), atMax ? "Qmax" : "Qmin", v, vTarget, miss,
+                   hardBlocked ? "at the hard switch cap"
+                               : "at the switch cap and below the release margin");
         continue;
       }
       toPV.push_back(node);
@@ -810,12 +817,20 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
                    mPVBuses.end());
     mPQBuses.push_back(node);
     mQLimitConvertedAtMax[node] = atMax;
-    if (++mQLimitSwitchCount[node] >= mMaxQLimitSwitchesPerBus)
+    CPS::UInt count = ++mQLimitSwitchCount[node];
+    if (count >= mMaxQLimitSwitchesPerBusHard)
       SPDLOG_LOGGER_WARN(mSLog,
                          "Q-limit: PV bus {} -> PQ pinned at {} (violation {:.4f} "
-                         "pu); frozen there after {} switches",
+                         "pu); frozen there after {} switches (hard cap)",
                          node->name(), atMax ? "Qmax" : "Qmin", std::get<3>(c),
-                         mQLimitSwitchCount[node]);
+                         count);
+    else if (count >= mMaxQLimitSwitchesPerBus)
+      SPDLOG_LOGGER_WARN(mSLog,
+                         "Q-limit: PV bus {} -> PQ pinned at {} (violation {:.4f} "
+                         "pu); at the switch cap after {} switches, only marginal "
+                         "releases are blocked",
+                         node->name(), atMax ? "Qmax" : "Qmin", std::get<3>(c),
+                         count);
     else
       SPDLOG_LOGGER_INFO(mSLog, "Q-limit: PV bus {} -> PQ pinned at {} (violation {:.4f} pu)",
                          node->name(), atMax ? "Qmax" : "Qmin", std::get<3>(c));
@@ -846,11 +861,18 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
         "Q-limit: PQ bus {} -> PV, voltage snapped {:.6f} -> {:.6f} ({:+.2f}%)",
         node->name(), vBefore, vSnap, (vSnap - vBefore) / vBefore * 100.0);
     mQLimitConvertedAtMax.erase(node);
-    if (++mQLimitSwitchCount[node] >= mMaxQLimitSwitchesPerBus)
+    CPS::UInt count = ++mQLimitSwitchCount[node];
+    if (count >= mMaxQLimitSwitchesPerBusHard)
+      SPDLOG_LOGGER_WARN(mSLog,
+                         "Q-limit: PQ bus {} -> PV at the hard switch cap ({} "
+                         "switches); if pinned again it stays pinned",
+                         node->name(), count);
+    else if (count >= mMaxQLimitSwitchesPerBus)
       SPDLOG_LOGGER_WARN(mSLog,
                          "Q-limit: PQ bus {} -> PV at the switch cap ({} "
-                         "switches); if pinned again it stays pinned",
-                         node->name(), mQLimitSwitchCount[node]);
+                         "switches); if pinned again, marginal releases are "
+                         "blocked",
+                         node->name(), count);
     else
       SPDLOG_LOGGER_INFO(mSLog, "Q-limit: PQ bus {} -> PV (constraint relaxed)",
                          node->name());

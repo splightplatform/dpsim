@@ -162,9 +162,14 @@ protected:
   CPS::Bool mEnforceReactiveLimits = false;
   /// Maximum number of Q-limit outer iterations
   CPS::UInt mMaxOuterIterations = 10;
-  /// Maximum number of PV<->PQ switches per bus before it is frozen (anti-oscillation)
+  /// PV<->PQ switches per bus after which only marginal releases are blocked (anti-oscillation)
   CPS::UInt mMaxQLimitSwitchesPerBus = 2;
+  /// PV<->PQ switches per bus after which every release is blocked, whatever the miss
+  CPS::UInt mMaxQLimitSwitchesPerBusHard = 6;
+  /// Below the hard cap, a release that misses the voltage target by at least this much [pu] is allowed
   CPS::Real mQLimitReleaseMargin = 1e-3;
+  /// A PV unit is pinned only when its Q exceeds a limit by more than this [pu]
+  CPS::Real mQLimitPinTolerance = 1e-4;
   /// Relative tolerance for non-authoritative (e.g. Load) base-voltage candidates vs. the zone's rating
   CPS::Real mBaseVoltageLooseTolerance = 0.1;
   /// Relative tolerance between authoritative base-voltage sources (generator/transformer/network-injection/VSI) within a zone
@@ -306,6 +311,16 @@ public:
   /// Enable generator reactive-limit enforcement (PV<->PQ outer loop)
   void setEnforceReactiveLimits(CPS::Bool value) {
     mEnforceReactiveLimits = value;
+  }
+  /// Switches per bus after which every release is blocked
+  void setMaxQLimitSwitchesPerBusHard(CPS::UInt maxSwitches) {
+    mMaxQLimitSwitchesPerBusHard = maxSwitches;
+  }
+  /// Smallest voltage miss [pu] that still releases a unit at the switch cap
+  void setQLimitReleaseMargin(CPS::Real margin) { mQLimitReleaseMargin = margin; }
+  /// How far past a Q limit [pu] a PV unit must go before it is pinned
+  void setQLimitPinTolerance(CPS::Real tolerance) {
+    mQLimitPinTolerance = tolerance;
   }
 
   /// Raise for grids with legitimate large voltage drop (e.g. untapped feeders)

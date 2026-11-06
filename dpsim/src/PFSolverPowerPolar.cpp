@@ -654,6 +654,7 @@ void PFSolverPowerPolar::calculatePAndQAtSlackBus() {
     sol_Q(node_idx) = S.imag();
   }
 }
+
 void PFSolverPowerPolar::calculateQAtPVBuses() {
   for (auto topoNode : mPVBuses) {
     auto node_idx = topoNode->matrixNodeIndex();
@@ -781,13 +782,12 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
       vTarget = mRegulatedVSetPU[genIdx];
     }
     if ((atMax && v > vTarget) || (!atMax && v < vTarget)) {
-      // at the switch cap the unit stays pinned at its limit
-      if (frozen(node)) {
+      CPS::Real miss = std::abs(v - vTarget);
+      // lets the cap block a release only when the miss is tiny, real oscillation
+      if (frozen(node) && miss < mQLimitReleaseMargin) {
         if (mQLimitReleaseBlocked.insert(node).second)
-          SPDLOG_LOGGER_WARN(mSLog,
-                             "Q-limit: bus {} would release from {} (V {:.6f}, "
-                             "target {:.6f}) but is at the switch cap; kept pinned",
-                             node->name(), atMax ? "Qmax" : "Qmin", v, vTarget);
+          SPDLOG_LOGGER_WARN(mSLog, "... at the switch cap; miss {:.2e} pu below the "
+                                    "release margin, kept pinned", ..., miss);
         continue;
       }
       toPV.push_back(node);
@@ -867,6 +867,11 @@ void PFSolverPowerPolar::clearReactiveLimitState() {
   mQLimitConvertedAtMax.clear();
   mQLimitSwitchCount.clear();
   mQLimitReleaseBlocked.clear();
+}
+
+void PFSolverPowerPolar::resetQLimitSwitchCounts() {
+  mQLimitSwitchCount.clear(); 
+  mQLimitReleaseBlocked.clear(); 
 }
 
 void PFSolverPowerPolar::calculatePAndQInjectionPQBuses() {

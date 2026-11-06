@@ -118,6 +118,8 @@ protected:
   CPS::Bool enforceReactiveLimits() override;
   /// Clear the Q-limit conversion bookkeeping between solves
   void clearReactiveLimitState() override;
+  /// Clear the Q-limit counts before starting remoteRegulation 
+  void resetQLimitSwitchCounts() override; 
   /// Buses switched PV->PQ by the Q-limit loop -> pinned at Qmax (true) or Qmin (false)
   std::map<CPS::TopologicalNode::Ptr, bool> mQLimitConvertedAtMax;
   /// Total PV<->PQ switches per bus over the solve (anti-oscillation cap)

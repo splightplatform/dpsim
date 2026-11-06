@@ -164,6 +164,7 @@ protected:
   CPS::UInt mMaxOuterIterations = 10;
   /// Maximum number of PV<->PQ switches per bus before it is frozen (anti-oscillation)
   CPS::UInt mMaxQLimitSwitchesPerBus = 2;
+  CPS::Real mQLimitReleaseMargin = 1e-3
   /// Relative tolerance for non-authoritative (e.g. Load) base-voltage candidates vs. the zone's rating
   CPS::Real mBaseVoltageLooseTolerance = 0.1;
   /// Relative tolerance between authoritative base-voltage sources (generator/transformer/network-injection/VSI) within a zone
@@ -221,6 +222,8 @@ protected:
   void resetToOriginalClassification();
   /// Clear Q-limit bookkeeping; overridden by PFSolverPowerPolar
   virtual void clearReactiveLimitState() {}
+  /// Reset Q-limit bookkeeping; used b4 remoteRegulationBatch
+  virtual void resetQLimitSwitchCounts() {}
   /// Base voltage a single component reports for `node`, or 0 if unknown
   CPS::Real componentBaseVoltage(CPS::TopologicalPowerComp::Ptr comp,
                                  CPS::TopologicalNode::Ptr node);

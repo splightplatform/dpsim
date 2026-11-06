@@ -753,10 +753,18 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
     constexpr CPS::Real kZeroQRangePU = 1e-6;
     if (std::abs(qMaxPU - qMinPU) <= kZeroQRangePU)
       continue;
-    CPS::Real v = sol_V(node->matrixNodeIndex());
-    if (atMax && v > vSetPU)
+    // A remote regulator is judged by the bus it regulates, against the remote target
+    UInt genIdx = node->matrixNodeIndex();
+    CPS::Real v = sol_V(genIdx);
+    CPS::Real vTarget = vSetPU;
+    auto remote = mRegulatedBusOfGen.find(genIdx);
+    if (remote != mRegulatedBusOfGen.end()) {
+      v = sol_V(remote->second);
+      vTarget = mRegulatedVSetPU[genIdx];
+    }
+    if (atMax && v > vTarget)
       toPV.push_back(node);
-    else if (!atMax && v < vSetPU)
+    else if (!atMax && v < vTarget)
       toPV.push_back(node);
   }
 
@@ -793,11 +801,17 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
     mPVBuses.push_back(node);
     CPS::Real qMaxPU, qMinPU, vSetPU;
     busLimits(node, qMaxPU, qMinPU, vSetPU);
-    CPS::Real vBefore = sol_V(node->matrixNodeIndex());
-    sol_V(node->matrixNodeIndex()) = vSetPU;
+    UInt genIdx = node->matrixNodeIndex();
+    // A remote regulator goes back to its current terminal setpoint, not to
+    // V_set_pu, which for it is the remote target
+    auto localSet = mLocalVSetOverride.find(genIdx);
+    CPS::Real vSnap =
+        localSet != mLocalVSetOverride.end() ? localSet->second : vSetPU;
+    CPS::Real vBefore = sol_V(genIdx);
+    sol_V(genIdx) = vSnap;
     SPDLOG_LOGGER_INFO(mSLog,
         "Q-limit: PQ bus {} -> PV, voltage snapped {:.6f} -> {:.6f} ({:+.2f}%)",
-        node->name(), vBefore, vSetPU, (vSetPU - vBefore) / vBefore * 100.0);
+        node->name(), vBefore, vSnap, (vSnap - vBefore) / vBefore * 100.0);
     mQLimitConvertedAtMax.erase(node);
     ++mQLimitSwitchCount[node];
     SPDLOG_LOGGER_INFO(mSLog, "Q-limit: PQ bus {} -> PV (constraint relaxed)",

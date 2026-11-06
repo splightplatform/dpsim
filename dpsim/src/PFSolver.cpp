@@ -85,6 +85,28 @@ void PFSolver::initialize() {
       mLocalVSetOverride[g] = mRegulatedVSetPU[g];
     }
   }
+
+  // Group regulators by the bus they regulate: one error and one move per group.
+  mRemoteRegGroups.clear();
+  std::map<UInt, size_t> groupOfBus;
+  for (auto &[g, r] : mRegulatedBusOfGen) {
+    auto it = groupOfBus.find(r);
+    if (it == groupOfBus.end()) {
+      groupOfBus[r] = mRemoteRegGroups.size();
+      mRemoteRegGroups.push_back({r, {g}, mRegulatedVSetPU[g]});
+      continue;
+    }
+    auto &group = mRemoteRegGroups[it->second];
+    group.genBuses.push_back(g);
+    if (std::abs(group.target - mRegulatedVSetPU[g]) > 1e-9)
+      SPDLOG_LOGGER_WARN(mSLog,
+                         "Gen bus idx {} regulates bus idx {} to {} pu, but the "
+                         "group already targets {} pu; using {} pu",
+                         g, r, mRegulatedVSetPU[g], group.target, group.target);
+  }
+  SPDLOG_LOGGER_INFO(mSLog, "Remote regulation: {} regulators in {} groups",
+                     mRegulatedBusOfGen.size(), mRemoteRegGroups.size());
+
   determinePFBusType();
   propagateAndVerifyBaseVoltage();
   composeAdmittanceMatrix();
@@ -726,7 +748,8 @@ Bool PFSolver::solvePowerflow() {
   }
 
   if (converged && !mRegulatedBusOfGen.empty()) {
-    converged = resolveRemoteRegulation();
+    converged = mRemoteRegBatch ? resolveRemoteRegulationBatch()
+                                : resolveRemoteRegulation();
     if (!converged)
       mOuterLoopsSettled = false;
   }
@@ -803,6 +826,202 @@ Bool PFSolver::resolveRemoteRegulation() {
 
   SPDLOG_LOGGER_WARN(mSLog, "Remote regulation did not settle within {} outer iterations",
                      mMaxRemoteRegIterations);
+  return false;
+}
+
+Bool PFSolver::resolveRemoteRegulationBatch() {
+  const int kMaxRetries = 3;
+
+  // Per-group state carried between passes
+  struct GroupState {
+    Real lastError = 0.0;
+    Real sensitivity = 0.0; // dV_regulated / dV_terminal; 0 = not measured yet
+    Real damping = 1.0;     // halved on every error sign flip, never raised
+    Real move = 0.0;        // requested move this pass
+    Real appliedMove = 0.0; // mean move actually applied (after clamping)
+    Real vRegBefore = 0.0;
+    Bool atBound = false;
+    std::vector<UInt> units; // units that move this pass
+  };
+  std::vector<GroupState> state(mRemoteRegGroups.size());
+
+  auto isPV = [&](UInt bus) {
+    Int pos = mPQPVPositionOfBus[bus];
+    return pos >= 0 && static_cast<UInt>(pos) >= mNumPQBuses;
+  };
+  auto isVD = [&](UInt bus) { return mPQPVPositionOfBus[bus] < 0; };
+
+  UInt solves = 0;
+  // Whether the last Q-limit re-check found nothing more to switch
+  Bool qLimitsSettled = true;
+
+  for (UInt pass = 1; pass <= mMaxRemoteRegBatchPasses; ++pass) {
+    UInt nMoving = 0, nInTol = 0, nPinned = 0, nBound = 0, nHeld = 0;
+    Real maxAbsError = 0.0;
+
+    // 1. Classify each group and size its move
+    for (size_t i = 0; i < mRemoteRegGroups.size(); ++i) {
+      auto &group = mRemoteRegGroups[i];
+      auto &st = state[i];
+      st.move = 0.0;
+      st.units.clear();
+
+      // a local regulator (or the slack) already holds the bus
+      if (isPV(group.regulatedBus) || isVD(group.regulatedBus)) {
+        ++nHeld;
+        continue;
+      }
+      // only voltage-controlled units can move; the rest are pinned at a Q limit
+      Bool anyPV = std::any_of(group.genBuses.begin(), group.genBuses.end(), isPV);
+      if (!anyPV) {
+        ++nPinned;
+        continue;
+      }
+
+      Real error = group.target - busVoltageMagnitude(group.regulatedBus);
+      if (st.lastError != 0.0 && (error > 0.0) != (st.lastError > 0.0))
+        st.damping *= 0.5;
+      st.lastError = error;
+
+      if (std::abs(error) < mRemoteRegTolerance) {
+        maxAbsError = std::max(maxAbsError, std::abs(error));
+        ++nInTol;
+        continue;
+      }
+
+      // drop units already at the setpoint bound in the direction the error asks for
+      for (UInt g : group.genBuses) {
+        if (!isPV(g))
+          continue;
+        Real vSet = mLocalVSetOverride[g];
+        if ((error > 0.0 && vSet >= mRemoteRegVSetMax) ||
+            (error < 0.0 && vSet <= mRemoteRegVSetMin))
+          continue;
+        st.units.push_back(g);
+      }
+      if (st.units.empty()) {
+        if (!st.atBound)
+          SPDLOG_LOGGER_INFO(mSLog,
+                             "Remote regulation: group at bus idx {} reached its "
+                             "setpoint bound (error {:.3e} pu)",
+                             group.regulatedBus, error);
+        st.atBound = true;
+        ++nBound;
+        continue;
+      }
+      st.atBound = false;
+
+      // gain 1 until a sensitivity is measured, then correct for the transformer
+      Real gain = st.sensitivity > 0.0
+                      ? st.damping * mRemoteRegGainFactor / st.sensitivity
+                      : st.damping;
+      st.move = std::clamp(gain * error, -mRemoteRegMaxMove, mRemoteRegMaxMove);
+      st.vRegBefore = busVoltageMagnitude(group.regulatedBus);
+      maxAbsError = std::max(maxAbsError, std::abs(error));
+      ++nMoving;
+      SPDLOG_LOGGER_DEBUG(mSLog,
+                          "Remote regulation pass {}: bus idx {} error {:.3e}, "
+                          "gain {:.4f}, move {:.5f}",
+                          pass, group.regulatedBus, error, gain, st.move);
+    }
+
+    SPDLOG_LOGGER_INFO(mSLog,
+                       "Remote regulation pass {}: max|error| {:.3e}, moving {}, "
+                       "in tolerance {}, Q-pinned {}, at setpoint bound {}, "
+                       "held locally {}, solves so far {}",
+                       pass, maxAbsError, nMoving, nInTol, nPinned, nBound, nHeld,
+                       solves);
+
+    if (nMoving == 0) {
+      if (!qLimitsSettled) {
+        SPDLOG_LOGGER_WARN(mSLog, "Remote regulation settled, but the Q-limit "
+                                  "re-check did not");
+        return false;
+      }
+      return true;
+    }
+
+    // 2. Apply all moves at once and let one warm Newton solve absorb them
+    std::map<UInt, Real> vSetBefore;
+    for (auto &st : state)
+      for (UInt g : st.units)
+        vSetBefore[g] = mLocalVSetOverride[g];
+
+    auto applyMoves = [&](Real fraction) {
+      for (auto &st : state) {
+        if (st.units.empty())
+          continue;
+        Real sum = 0.0;
+        for (UInt g : st.units) {
+          Real v = std::clamp(vSetBefore[g] + fraction * st.move,
+                              mRemoteRegVSetMin, mRemoteRegVSetMax);
+          mLocalVSetOverride[g] = v;
+          setBusVoltageMagnitude(g, v);
+          sum += v - vSetBefore[g];
+        }
+        st.appliedMove = sum / st.units.size();
+      }
+    };
+
+    Bool solved = false;
+    Real fraction = 1.0;
+    for (int attempt = 0; attempt <= kMaxRetries; ++attempt) {
+      applyMoves(fraction);
+      ++solves;
+      if (runNewtonRaphson("remote regulation")) {
+        solved = true;
+        break;
+      }
+      fraction *= 0.5;
+      SPDLOG_LOGGER_WARN(mSLog,
+                         "Remote regulation pass {}: solve failed, retrying with "
+                         "moves scaled by {}",
+                         pass, fraction);
+    }
+    if (!solved) {
+      // put the setpoints back and return to the last good operating point
+      applyMoves(0.0);
+      runNewtonRaphson("remote regulation restore");
+      SPDLOG_LOGGER_WARN(mSLog, "Remote regulation pass {}: solve failed after {} "
+                                "retries; setpoints restored",
+                         pass, kMaxRetries);
+      return false;
+    }
+
+    // 3. Measure each moved group's sensitivity from what actually happened
+    for (size_t i = 0; i < mRemoteRegGroups.size(); ++i) {
+      auto &st = state[i];
+      if (st.units.empty() || std::abs(st.appliedMove) < 1e-12)
+        continue;
+      Real s = (busVoltageMagnitude(mRemoteRegGroups[i].regulatedBus) -
+                st.vRegBefore) /
+               st.appliedMove;
+      if (s >= mRemoteRegSensitivityMin && s <= mRemoteRegSensitivityMax)
+        st.sensitivity = s;
+    }
+
+    // 4. The moves change reactive output: re-check limits and re-solve if anything switched
+    if (mEnforceReactiveLimits) {
+      qLimitsSettled = false;
+      for (UInt q = 0; q < mMaxOuterIterations; ++q) {
+        if (!enforceReactiveLimits()) {
+          qLimitsSettled = true;
+          break;
+        }
+        reclassifyBuses();
+        ++solves;
+        if (!runNewtonRaphson("remote regulation Q-limit")) {
+          SPDLOG_LOGGER_WARN(mSLog, "Remote regulation pass {}: Q-limit re-solve "
+                                    "failed",
+                             pass);
+          return false;
+        }
+      }
+    }
+  }
+
+  SPDLOG_LOGGER_WARN(mSLog, "Remote regulation did not settle within {} passes",
+                     mMaxRemoteRegBatchPasses);
   return false;
 }
 

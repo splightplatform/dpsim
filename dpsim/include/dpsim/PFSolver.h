@@ -168,7 +168,7 @@ protected:
   CPS::UInt mMaxQLimitSwitchesPerBusHard = 6;
   /// Below the hard cap, a release that misses the voltage target by at least this much [pu] is allowed
   CPS::Real mQLimitReleaseMargin = 1e-3;
-  /// A PV unit is pinned only when its Q exceeds a limit by more than this [pu]
+  /// A unit released once is pinned only when its Q exceeds a limit by more than this [pu]
   CPS::Real mQLimitPinTolerance = 1e-4;
   /// Relative tolerance for non-authoritative (e.g. Load) base-voltage candidates vs. the zone's rating
   CPS::Real mBaseVoltageLooseTolerance = 0.1;
@@ -318,7 +318,7 @@ public:
   }
   /// Smallest voltage miss [pu] that still releases a unit at the switch cap
   void setQLimitReleaseMargin(CPS::Real margin) { mQLimitReleaseMargin = margin; }
-  /// How far past a Q limit [pu] a PV unit must go before it is pinned
+  /// How far past a Q limit [pu] a released unit must go before it is pinned again
   void setQLimitPinTolerance(CPS::Real tolerance) {
     mQLimitPinTolerance = tolerance;
   }

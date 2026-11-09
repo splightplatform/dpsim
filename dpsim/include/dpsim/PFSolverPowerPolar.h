@@ -126,6 +126,8 @@ protected:
   std::map<CPS::TopologicalNode::Ptr, CPS::UInt> mQLimitSwitchCount;
   /// Pinned buses whose release was blocked by the switch cap (warned once each)
   std::set<CPS::TopologicalNode::Ptr> mQLimitReleaseBlocked;
+  /// Buses released PQ->PV at least once this solve; only pin these to tolerance
+  std::set<CPS::TopologicalNode::Ptr> mQLimitReleasedOnce; 
   /// Calculate complex power flowing from this node to the other nodes
   void calculatePAndQInjectionPQBuses();
   /// Calculate branch flows from current solution and store them in line and transformer components

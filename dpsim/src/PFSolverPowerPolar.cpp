@@ -753,11 +753,12 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
     if (!busLimits(node, qMaxPU, qMinPU, vSetPU))
       continue;
     CPS::Real qGen = generatorReactivePowerPerUnit(node);
-    // a unit released at its limit stays PV, so the batch loop can move its
+    // a released unit stays PV at its limit, so the batch loop can move its
     // setpoint off the limit instead of pinning it again on rounding noise
-    if (CPS::Math::isFinite(qMaxPU) && qGen > qMaxPU + mQLimitPinTolerance)
+    CPS::Real tol = mQLimitReleasedOnce.count(node) ? mQLimitPinTolerance : 0.0;
+    if (CPS::Math::isFinite(qMaxPU) && qGen > qMaxPU + tol)
       toPQ.emplace_back(node, true, qMaxPU, qGen - qMaxPU);
-    else if (CPS::Math::isFinite(qMinPU) && qGen < qMinPU - mQLimitPinTolerance)
+    else if (CPS::Math::isFinite(qMinPU) && qGen < qMinPU - tol)
       toPQ.emplace_back(node, false, qMinPU, qMinPU - qGen);
   }
 
@@ -861,6 +862,7 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
         "Q-limit: PQ bus {} -> PV, voltage snapped {:.6f} -> {:.6f} ({:+.2f}%)",
         node->name(), vBefore, vSnap, (vSnap - vBefore) / vBefore * 100.0);
     mQLimitConvertedAtMax.erase(node);
+    mQLimitReleasedOnce.insert(node);
     CPS::UInt count = ++mQLimitSwitchCount[node];
     if (count >= mMaxQLimitSwitchesPerBusHard)
       SPDLOG_LOGGER_WARN(mSLog,
@@ -892,6 +894,7 @@ void PFSolverPowerPolar::clearReactiveLimitState() {
   mQLimitConvertedAtMax.clear();
   mQLimitSwitchCount.clear();
   mQLimitReleaseBlocked.clear();
+  mQLimitReleasedOnce.clear();
 }
 
 void PFSolverPowerPolar::resetQLimitSwitchCounts() {

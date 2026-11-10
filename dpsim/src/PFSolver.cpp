@@ -9,8 +9,10 @@
 #include <dpsim-models/MathUtils.h>
 #include <dpsim/PFSolver.h>
 #include <dpsim/SequentialScheduler.h>
+#include <Eigen/Dense>
 #include <iostream>
 #include <numeric>
+#include <set>
 
 using namespace DPsim;
 using namespace CPS;
@@ -73,22 +75,7 @@ void PFSolver::initialize() {
   assignMatrixNodeIndices(); // gives each node its own index (used in sol_V(i), etc)
   initializeComponents(); // converts each components params to pu
 
-  // Find remote regulators
-  for (auto gen : mSynchronGenerators) {
-    UInt g = gen->node(0)->matrixNodeIndex();
-    auto rn = gen->regulatedNode();
-    SPDLOG_LOGGER_INFO(mSLog, "Gen at bus idx {}: regulatedNode = {}",
-                       g, rn ? std::to_string(rn->matrixNodeIndex()) : "null");
-    if (rn && rn->matrixNodeIndex() != g) {
-      UInt r = rn->matrixNodeIndex();
-      mRegulatedBusOfGen[g] = r; // maps a gen node index to the bus node index it regulates
-      // maps a gen node index to remote target voltage setpoint
-      mRegulatedVSetPU[g] = gen->attributeTyped<Real>("V_set_pu")->get();
-      // maps a gen node index to a terminal setpoint (starts at remote target)
-      mLocalVSetOverride[g] = mRegulatedVSetPU[g];
-    }
-  }
-
+  setUpRemoteRegulation(); // creates the maps needed to do Remote Regulation
   determinePFBusType(); // classifies each bus as PQ, PV, VD
   propagateAndVerifyBaseVoltage(); // determine each bus's base voltage zone by zone
   composeAdmittanceMatrix(); // stamps every line, transformer, and shunt into mY
@@ -99,6 +86,30 @@ void PFSolver::initialize() {
   setUpJacobianStorage();
   mX.setZero(mNumUnknowns);
   mF.setZero(mNumUnknowns);
+}
+
+void PFSolver::setUpRemoteRegulation(){
+  for (auto gen : mSynchronGenerators) {
+    // create mRemoteRegShareNode map
+    CPS::TopologicalNode::Ptr genNode = gen->node(0); 
+    CPS::Real regShare = gen->remoteRegulationShare(); 
+    if (regShare > 0)
+      mRemoteRegShareOfNode[genNode] = std::max(regShare, mRemoteRegShareOfNode[genNode]);
+
+    UInt g = genNode->matrixNodeIndex();
+    auto rn = gen->regulatedNode();
+    SPDLOG_LOGGER_INFO(mSLog, "Gen at bus idx {}: regulatedNode = {}",
+                       g, rn ? std::to_string(rn->matrixNodeIndex()) : "null");
+    // fill in other RR maps
+    if (rn && rn->matrixNodeIndex() != g) {
+      UInt r = rn->matrixNodeIndex();
+      mRegulatedBusOfGen[g] = r; // maps a gen node index to the bus node index it regulates
+      // maps a gen node index to remote target voltage setpoint
+      mRegulatedVSetPU[g] = gen->attributeTyped<Real>("V_set_pu")->get();
+      // maps a gen node index to a terminal setpoint (starts at remote target)
+      mLocalVSetOverride[g] = mRegulatedVSetPU[g];
+    }
+  }
 }
 
 void PFSolver::setRemoteRegGroups(){
@@ -805,8 +816,20 @@ Bool PFSolver::solvePowerflow() {
   }
 
   if (converged && !mRegulatedBusOfGen.empty()) {
-    converged = mRemoteRegBatch ? resolveRemoteRegulationBatch()
-                                : resolveRemoteRegulation();
+    Bool useNewton = false;
+    if (mRemoteRegNewton) {
+      Matrix dV, dQ;
+      useNewton = remoteRegulationSensitivities({}, {}, {}, dV, dQ);
+      if (!useNewton)
+        SPDLOG_LOGGER_WARN(mSLog, "Newton remote regulation needs the sparse "
+                                  "solver; using the batch loop instead");
+    }
+    if (useNewton)
+      converged = resolveRemoteRegulationNewton();
+    else
+      converged = (mRemoteRegBatch || mRemoteRegNewton)
+                      ? resolveRemoteRegulationBatch()
+                      : resolveRemoteRegulation();
     if (!converged)
       mOuterLoopsSettled = false;
   }
@@ -1086,6 +1109,281 @@ Bool PFSolver::resolveRemoteRegulationBatch() {
   }
 
   SPDLOG_LOGGER_WARN(mSLog, "Remote regulation did not settle within {} passes",
+                     mMaxRemoteRegBatchPasses);
+  return false;
+}
+
+Bool PFSolver::resolveRemoteRegulationNewton() {
+  const int kMaxRetries = 3;
+
+  auto isPV = [&](UInt bus) {
+    Int pos = mPQPVPositionOfBus[bus];
+    return pos >= 0 && static_cast<UInt>(pos) >= mNumPQBuses;
+  };
+  auto isVD = [&](UInt bus) { return mPQPVPositionOfBus[bus] < 0; };
+
+  // RMPCT share of a bus; 0 = none given
+  std::vector<Real> shareOfBus(mSystem.mNodes.size(), 0.0);
+  for (auto &[node, share] : mRemoteRegShareOfNode)
+    shareOfBus[node->matrixNodeIndex()] = share;
+
+  // units that reached a setpoint bound stop moving for the rest of the solve
+  std::set<UInt> atBound;
+  UInt solves = 0;
+  Bool qLimitsSettled = true;
+  resetQLimitSwitchCounts();
+  // the base solve converged so it is the first good operating point
+  saveOperatingPoint();
+
+  for (UInt pass = 1; pass <= mMaxRemoteRegBatchPasses; ++pass) {
+    // 1. Rows and columns from the present PV/PQ classification
+    std::vector<UInt> inputs;      // columns: setpoints that move
+    std::map<UInt, UInt> colOf;    // bus -> column
+    std::vector<UInt> vOut;        // regulated buses with a voltage row
+    std::vector<UInt> qOut;        // buses whose generator Q enters a share row
+    std::map<UInt, UInt> qRowOf;   // bus -> index in qOut
+
+    struct VRow { UInt vIdx; Real residual; };
+    struct ShareRow { UInt member; std::vector<UInt> members; Real weight; Real residual; };
+    struct TieRow { UInt col, firstCol; };
+    std::vector<VRow> vRows;
+    std::vector<ShareRow> shareRows;
+    std::vector<TieRow> tieRows;
+    std::vector<Real> shareTol; // tolerance of each share row [pu]
+
+    UInt nPinned = 0, nHeld = 0, nBound = 0;
+    Real maxVErr = 0.0, maxQErr = 0.0;
+    Bool settled = true;
+
+    auto qIndex = [&](UInt bus) {
+      auto it = qRowOf.find(bus);
+      if (it != qRowOf.end())
+        return it->second;
+      qRowOf[bus] = qOut.size();
+      qOut.push_back(bus);
+      return static_cast<UInt>(qOut.size() - 1);
+    };
+
+    for (auto &group : mRemoteRegGroups) {
+      Bool held = std::any_of(group.tiedBuses.begin(), group.tiedBuses.end(),
+                              [&](UInt b) { return isPV(b) || isVD(b); });
+      std::vector<UInt> pv, movers;
+      for (UInt g : group.genBuses)
+        if (isPV(g)) {
+          pv.push_back(g);
+          if (!atBound.count(g))
+            movers.push_back(g);
+        }
+      if (pv.empty()) {
+        ++nPinned;
+        continue;
+      }
+
+      // the group's PV units plus local PV units holding a tied bus
+      std::vector<UInt> members = pv;
+      for (UInt b : group.tiedBuses)
+        if (isPV(b) && shareOfBus[b] > 0.0 &&
+            std::find(group.genBuses.begin(), group.genBuses.end(), b) ==
+                group.genBuses.end())
+          members.push_back(b);
+      Bool sharing = members.size() >= 2 &&
+                     std::all_of(members.begin(), members.end(),
+                                 [&](UInt m) { return shareOfBus[m] > 0.0; });
+
+      if (held && !sharing) {
+        ++nHeld;
+        continue;
+      }
+      if (movers.empty()) {
+        ++nBound;
+        continue;
+      }
+
+      for (UInt g : movers)
+        if (!colOf.count(g)) {
+          colOf[g] = inputs.size();
+          inputs.push_back(g);
+        }
+
+      if (!held) {
+        Real residual = busVoltageMagnitude(group.regulatedBus) - group.target;
+        vRows.push_back({static_cast<UInt>(vOut.size()), residual});
+        vOut.push_back(group.regulatedBus);
+        maxVErr = std::max(maxVErr, std::abs(residual));
+        if (std::abs(residual) >= mRemoteRegNewtonTolerance)
+          settled = false;
+      }
+
+      if (sharing) {
+        Real shareSum = 0.0, qSum = 0.0, qAbsSum = 0.0;
+        for (UInt m : members) {
+          shareSum += shareOfBus[m];
+          Real q = busGeneratorReactivePower(m);
+          qSum += q;
+          qAbsSum += std::abs(q);
+        }
+        Real tol = std::max(mRemoteRegQSplitTolerance / mBaseApparentPower,
+                            mRemoteRegQSplitRelTolerance * qAbsSum);
+        // the share residuals sum to zero, so the last member's row is implied
+        for (size_t i = 0; i + 1 < members.size(); ++i) {
+          UInt m = members[i];
+          Real w = shareOfBus[m] / shareSum;
+          Real residual = busGeneratorReactivePower(m) - w * qSum;
+          shareRows.push_back({m, members, w, residual});
+          shareTol.push_back(tol);
+          for (UInt b : members)
+            qIndex(b);
+          maxQErr = std::max(maxQErr, std::abs(residual));
+          if (std::abs(residual) >= tol)
+            settled = false;
+        }
+      } else {
+        // no shares: every mover keeps the same move, as in the batch loop
+        for (size_t i = 1; i < movers.size(); ++i)
+          tieRows.push_back({colOf[movers[i]], colOf[movers[0]]});
+      }
+    }
+
+    const UInt nRows = vRows.size() + shareRows.size() + tieRows.size();
+    const UInt nCols = inputs.size();
+    SPDLOG_LOGGER_INFO(mSLog,
+                       "Remote regulation (Newton) pass {}: max|V error| {:.3e} pu, "
+                       "max|Q split error| {:.3f} MVAr, {} setpoints, {} rows, "
+                       "Q-pinned {}, held without shares {}, at setpoint bound {}, "
+                       "solves so far {}",
+                       pass, maxVErr, maxQErr * mBaseApparentPower / 1e6, nCols,
+                       nRows, nPinned, nHeld, nBound, solves);
+
+    if (settled || nCols == 0) {
+      if (!qLimitsSettled) {
+        SPDLOG_LOGGER_WARN(mSLog, "Remote regulation settled, but the Q-limit "
+                                  "re-check did not");
+        return false;
+      }
+      return true;
+    }
+
+    // 2. Exact sensitivities at this converged point
+    Matrix dV, dQ;
+    if (!remoteRegulationSensitivities(inputs, vOut, qOut, dV, dQ)) {
+      SPDLOG_LOGGER_WARN(mSLog, "Remote regulation (Newton): sensitivities "
+                                "unavailable, stopping");
+      return false;
+    }
+
+    // 3. Assemble M * delta = -residual
+    Matrix M = Matrix::Zero(nRows, nCols);
+    Vector rhs = Vector::Zero(nRows);
+    UInt row = 0;
+    for (auto &v : vRows) {
+      M.row(row) = dV.row(v.vIdx);
+      rhs(row++) = -v.residual;
+    }
+    for (auto &s : shareRows) {
+      M.row(row) = dQ.row(qRowOf[s.member]);
+      for (UInt b : s.members)
+        M.row(row) -= s.weight * dQ.row(qRowOf[b]);
+      rhs(row++) = -s.residual;
+    }
+    for (auto &t : tieRows) {
+      M(row, t.col) = 1.0;
+      M(row, t.firstCol) = -1.0;
+      rhs(row++) = 0.0;
+    }
+    // QR, not LU: units at a bound can leave the system over-determined
+    Vector delta = M.colPivHouseholderQr().solve(rhs);
+
+    // 4. Scale so the largest move stays within the per-pass limit
+    Real biggest = delta.cwiseAbs().maxCoeff();
+    if (!(biggest < 1e12)) { // NaN or blow-up from a singular system
+      SPDLOG_LOGGER_WARN(mSLog, "Remote regulation (Newton) pass {}: singular "
+                                "sensitivity system, stopping", pass);
+      return false;
+    }
+    if (biggest < 1e-10) {
+      // least-squares optimum: the remaining error can't be reduced by these setpoints
+      SPDLOG_LOGGER_WARN(mSLog, "Remote regulation (Newton) pass {}: no further "
+                                "improvement possible (max|V error| {:.3e} pu)",
+                         pass, maxVErr);
+      return qLimitsSettled;
+    }
+    if (biggest > mRemoteRegMaxMove)
+      delta *= mRemoteRegMaxMove / biggest;
+
+    std::vector<Real> vSetBefore(nCols);
+    for (UInt c = 0; c < nCols; ++c)
+      vSetBefore[c] = mLocalVSetOverride[inputs[c]];
+
+    auto applyMoves = [&](Real fraction) {
+      for (UInt c = 0; c < nCols; ++c) {
+        UInt g = inputs[c];
+        Real v = std::clamp(vSetBefore[c] + fraction * delta(c),
+                            mRemoteRegVSetMin, mRemoteRegVSetMax);
+        mLocalVSetOverride[g] = v;
+        setBusVoltageMagnitude(g, v);
+      }
+    };
+
+    Bool solved = false;
+    Real fraction = 1.0;
+    for (int attempt = 0; attempt <= kMaxRetries; ++attempt) {
+      applyMoves(fraction);
+      ++solves;
+      if (runNewtonRaphson("remote regulation")) {
+        solved = true;
+        break;
+      }
+      fraction *= 0.5;
+      SPDLOG_LOGGER_WARN(mSLog,
+                         "Remote regulation (Newton) pass {}: solve failed, "
+                         "retrying with moves scaled by {}",
+                         pass, fraction);
+    }
+    if (!solved) {
+      restoreOperatingPoint();
+      SPDLOG_LOGGER_WARN(mSLog, "Remote regulation (Newton) pass {}: solve failed "
+                                "after {} retries; setpoints restored",
+                         pass, kMaxRetries);
+      return false;
+    }
+
+    // units that landed on a bound stop moving
+    for (UInt c = 0; c < nCols; ++c) {
+      Real v = mLocalVSetOverride[inputs[c]];
+      if (v <= mRemoteRegVSetMin + 1e-12 || v >= mRemoteRegVSetMax - 1e-12) {
+        if (atBound.insert(inputs[c]).second)
+          SPDLOG_LOGGER_INFO(mSLog, "Remote regulation (Newton): unit at bus idx "
+                                    "{} reached its setpoint bound ({:.4f} pu)",
+                             inputs[c], v);
+      }
+    }
+    saveOperatingPoint();
+
+    // 5. The moves change reactive output so re-check limits and re-solve.
+    // Pinned units become PQ and drop out of the next pass's rows.
+    if (mEnforceReactiveLimits) {
+      qLimitsSettled = false;
+      for (UInt q = 0; q < mMaxOuterIterations; ++q) {
+        if (!enforceReactiveLimits()) {
+          qLimitsSettled = true;
+          break;
+        }
+        reclassifyBuses();
+        ++solves;
+        if (!runNewtonRaphson("remote regulation Q-limit")) {
+          restoreOperatingPoint();
+          SPDLOG_LOGGER_WARN(mSLog, "Remote regulation (Newton) pass {}: Q-limit "
+                                    "re-solve failed; restored the last good "
+                                    "operating point (|F| {:.3e})",
+                             pass, mF.norm());
+          return false;
+        }
+        saveOperatingPoint();
+      }
+    }
+  }
+
+  SPDLOG_LOGGER_WARN(mSLog, "Remote regulation (Newton) did not settle within {} passes",
                      mMaxRemoteRegBatchPasses);
   return false;
 }

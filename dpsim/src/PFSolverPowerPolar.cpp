@@ -711,6 +711,24 @@ CPS::Real PFSolverPowerPolar::generatorReactivePowerPerUnit(
   CPS::Complex S = sol_Vcx(k) * conj(I);
   return S.imag() + loadReactivePowerPerUnit(node);
 }
+CPS::Bool PFSolverPowerPolar::isQLimitPinned(CPS::UInt busIdx) {
+    if (mNodeOfIndex.empty())
+      createNodeIndexMap(); 
+    auto node = busIdx < mNodeOfIndex.size() ? mNodeOfIndex[busIdx] : nullptr; 
+    if (node)
+      return mQLimitConvertedAtMax.count(node) > 0; 
+    else 
+      return false; 
+}
+CPS::Real PFSolverPowerPolar::busGeneratorReactivePower(CPS::UInt busIdx) {
+  if (mNodeOfIndex.empty())
+    createNodeIndexMap(); 
+  auto node = busIdx < mNodeOfIndex.size() ? mNodeOfIndex[busIdx] : nullptr; 
+  if (node) 
+    return generatorReactivePowerPerUnit(node); 
+  else
+    return 0.0; 
+}
 
 CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
   // Returns false if the bus has no generator or no finite Q limit.

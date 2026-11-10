@@ -37,6 +37,7 @@ protected:
 
   // Remote regulation
   std::map<CPS::UInt, CPS::UInt> mRegulatedBusOfGen; // genBusIdx -> targetBusIdx (only entries where they differ)
+  std::map<CPS::TopologicalNode::Ptr, CPS::Real> mRemoteRegShareOfNode; // node -> percent share
   std::map<CPS::UInt, CPS::Real> mLocalVSetOverride; // genBusIdx -> current local V_set_pu being tuned
   std::map<CPS::UInt, CPS::Real> mRegulatedVSetPU;   // genBusIdx -> target pu at the remote bus
   /// Lines with Z below this [pu] are in the same group for remote-regulation
@@ -66,11 +67,20 @@ protected:
   /// Measured sensitivities dV_regulated / dV_terminal outside this range are ignored
   CPS::Real mRemoteRegSensitivityMin = 0.1;
   CPS::Real mRemoteRegSensitivityMax = 1.5;
+  /// Newton mode: move every remote setpoint jointly from exact Jacobian sensitivities
+  CPS::Bool mRemoteRegNewton = false;
+  /// Newton mode: regulated-bus voltage tolerance [pu]
+  CPS::Real mRemoteRegNewtonTolerance = 1e-6;
+  /// Newton mode: RMPCT share tolerance, absolute [VAr] and relative to the group's total |Q|
+  CPS::Real mRemoteRegQSplitTolerance = 1e5;
+  CPS::Real mRemoteRegQSplitRelTolerance = 1e-3;
 
   /// Drive local PV setpoints so remote-regulated buses reach their target voltage
   Bool resolveRemoteRegulation();
   /// Batch variant, move every group at once, one Newton solve per pass
   Bool resolveRemoteRegulationBatch();
+  /// Newton variant, voltage rows, RMPCT share rows and tie rows solved jointly each pass
+  Bool resolveRemoteRegulationNewton();
   /// Sets mRemoteRegGroups based on cluster
   void setRemoteRegGroups(); 
   /// Last good operating point of the batch loop: bus classification and setpoints
@@ -88,6 +98,13 @@ protected:
   virtual CPS::Real busVoltageMagnitude(CPS::UInt busIdx) = 0;
   virtual void setBusVoltageMagnitude(CPS::UInt busIdx, CPS::Real value) = 0;
   virtual CPS::Bool isQLimitPinned(CPS::UInt busIdx) { return false; } // base: no Q-limit concept
+  /// Exact sensitivities at the present converged point, for +1 pu of each input
+  virtual CPS::Bool remoteRegulationSensitivities(
+    const std::vector<CPS::UInt> &inputs, const std::vector<CPS::UInt> &vOut,
+    const std::vector<CPS::UInt> &qOut, CPS::Matrix &dV, CPS::Matrix &dQ)
+  { return false; }
+  /// Returns the generator Q at that bus [pu]
+  virtual CPS::Real busGeneratorReactivePower(CPS::UInt busIdx) { return 0.0; }
 
   /// Number of PQ nodes
   UInt mNumPQBuses = 0;
@@ -226,6 +243,8 @@ protected:
   void setBaseApparentPower();
   /// Determine bus type for all buses
   void determinePFBusType();
+  /// Setups up the maps needed for remote regulation
+  void setUpRemoteRegulation(); 
   /// Rebuild index vectors + counts from the PQ/PV/VD node lists
   void rebuildBusIndexAggregates();
   /// Re-derive index vectors and resize the system after PV<->PQ switching
@@ -361,6 +380,11 @@ public:
   /// Remote-regulated bus voltage error below which a group counts as settled [pu]
   void setRemoteRegulationTolerance(CPS::Real tolerance) {
     mRemoteRegTolerance = tolerance;
+  }
+  /// Newton remote regulation with RMPCT sharing 
+  void setRemoteRegulationNewton(CPS::Bool value, CPS::Real tolerance = 1e-6) {
+    mRemoteRegNewton = value;
+    mRemoteRegNewtonTolerance = tolerance;
   }
   /// Maximum passes of the batch remote-regulation loop
   void setMaxRemoteRegulationPasses(CPS::UInt passes) {

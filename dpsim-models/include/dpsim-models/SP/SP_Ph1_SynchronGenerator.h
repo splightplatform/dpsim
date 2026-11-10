@@ -51,6 +51,8 @@ public:
 
   // Remote bus regulation
   CPS::TopologicalNode::Ptr mRegulatedNode;
+  /// RMPCT [%] of the generation at this bus; 0 = not given
+  CPS::Real mRemoteRegulationShare = 0.0;
 
   /// Defines UID, name and logging level
   SynchronGenerator(String uid, String name,
@@ -85,6 +87,8 @@ public:
   // Remote bus regulation
   void setRegulatedNode(CPS::TopologicalNode::Ptr n) { mRegulatedNode = n; }
   CPS::TopologicalNode::Ptr regulatedNode() const { return mRegulatedNode; }
+  void setRemoteRegulationShare(Real val) { mRemoteRegulationShare = val; }
+  CPS::Real remoteRegulationShare() const { return mRemoteRegulationShare; }
 };
 } // namespace Ph1
 } // namespace SP

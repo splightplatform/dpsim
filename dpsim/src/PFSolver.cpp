@@ -112,7 +112,7 @@ void PFSolver::setRemoteRegGroups(){
   if (mZeroImpedanceThreshold > 0.0){
     for (auto line : mLines) {
       Real vBase = mBaseVoltageAtNode[line->node(0)];
-      Real zBase = vBase * vBase / mBaseApparentPower; 
+      Real zBase = vBase * vBase / mSolverBaseApparentPower;
       Real zPU = std::abs(Complex(**line->mSeriesRes, mSystem.mSystemOmega * **line->mSeriesInd)) / zBase; 
 
       if (zPU > mZeroImpedanceThreshold)

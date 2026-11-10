@@ -181,6 +181,8 @@ protected:
   CPS::Real mBaseVoltageStrictTolerance = 0.01;
   /// Base power of per-unit system
   CPS::Real mBaseApparentPower;
+  /// Solver's base power for zero-impedance grouping
+  CPS::Real mSolverBaseApparentPower = 100e6; 
   /// Fallback base apparent power if no generator or transformer rating is found
   CPS::Real mBaseApparentPowerFallback = 100e6;
   /// Convergence flag of the last Newton-Raphson run
@@ -376,7 +378,19 @@ public:
   }
 
   /// Set the zero-impedance threshold (from PSS/E solve)
-  void setZeroImpedanceThreshold(CPS::Real threshold){ mZeroImpedanceThreshold = threshold;}
+  void setZeroImpedanceThreshold(CPS::Real threshold) {
+    mZeroImpedanceThreshold = threshold;
+    // initialize() already grouped the regulators so regroup with the correct threshold
+    if (!mRegulatedBusOfGen.empty())
+      setRemoteRegGroups();
+  }
+
+  /// Sets the base power for the solvers zero-impedance grouping
+  void setSolverBasePower(CPS::Real power){
+    mSolverBaseApparentPower = power; 
+    if (!mRegulatedBusOfGen.empty())
+      setRemoteRegGroups(); 
+  }
 
   class SolveTask : public CPS::Task {
   public:

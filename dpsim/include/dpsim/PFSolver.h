@@ -39,6 +39,8 @@ protected:
   std::map<CPS::UInt, CPS::UInt> mRegulatedBusOfGen; // genBusIdx -> targetBusIdx (only entries where they differ)
   std::map<CPS::UInt, CPS::Real> mLocalVSetOverride; // genBusIdx -> current local V_set_pu being tuned
   std::map<CPS::UInt, CPS::Real> mRegulatedVSetPU;   // genBusIdx -> target pu at the remote bus
+  /// Lines with Z below this [pu] are in the same group for remote-regulation
+  CPS::Real mZeroImpedanceThreshold = 0.0; 
   CPS::Real mRemoteRegTolerance = 1e-5;
   CPS::UInt mMaxRemoteRegIterations = 30;
 
@@ -47,6 +49,7 @@ protected:
     CPS::UInt regulatedBus;
     std::vector<CPS::UInt> genBuses;
     CPS::Real target; // remote target voltage [pu]
+    std::vector<CPS::UInt> tiedBuses = {}; // every bus in zero-impedance cluster
   };
   std::vector<RemoteRegGroup> mRemoteRegGroups;
   /// Use the batch loop (true) or the one-regulator-at-a-time loop (false)
@@ -68,6 +71,8 @@ protected:
   Bool resolveRemoteRegulation();
   /// Batch variant, move every group at once, one Newton solve per pass
   Bool resolveRemoteRegulationBatch();
+  /// Sets mRemoteRegGroups based on cluster
+  void setRemoteRegGroups(); 
   /// Last good operating point of the batch loop: bus classification and setpoints
   struct OperatingPoint {
     CPS::TopologicalNode::List pqBuses;
@@ -369,6 +374,9 @@ public:
     mRemoteRegSensitivityMin = sMin;
     mRemoteRegSensitivityMax = sMax;
   }
+
+  /// Set the zero-impedance threshold (from PSS/E solve)
+  void setZeroImpedanceThreshold(CPS::Real threshold){ mZeroImpedanceThreshold = threshold;}
 
   class SolveTask : public CPS::Task {
   public:

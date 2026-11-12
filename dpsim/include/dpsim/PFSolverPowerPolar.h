@@ -9,6 +9,7 @@
 #pragma once
 
 #include <map>
+#include <set>
 #include <limits>
 
 #include <dpsim/PFSolver.h>
@@ -117,10 +118,16 @@ protected:
   CPS::Bool enforceReactiveLimits() override;
   /// Clear the Q-limit conversion bookkeeping between solves
   void clearReactiveLimitState() override;
+  /// Clear the Q-limit counts before starting remoteRegulation 
+  void resetQLimitSwitchCounts() override; 
   /// Buses switched PV->PQ by the Q-limit loop -> pinned at Qmax (true) or Qmin (false)
   std::map<CPS::TopologicalNode::Ptr, bool> mQLimitConvertedAtMax;
   /// Total PV<->PQ switches per bus over the solve (anti-oscillation cap)
   std::map<CPS::TopologicalNode::Ptr, CPS::UInt> mQLimitSwitchCount;
+  /// Pinned buses whose release was blocked by the switch cap (warned once each)
+  std::set<CPS::TopologicalNode::Ptr> mQLimitReleaseBlocked;
+  /// Buses released PQ->PV at least once this solve; only pin these to tolerance
+  std::set<CPS::TopologicalNode::Ptr> mQLimitReleasedOnce; 
   /// Calculate complex power flowing from this node to the other nodes
   void calculatePAndQInjectionPQBuses();
   /// Calculate branch flows from current solution and store them in line and transformer components

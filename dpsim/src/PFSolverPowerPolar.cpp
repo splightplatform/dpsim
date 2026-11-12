@@ -654,6 +654,7 @@ void PFSolverPowerPolar::calculatePAndQAtSlackBus() {
     sol_Q(node_idx) = S.imag();
   }
 }
+
 void PFSolverPowerPolar::calculateQAtPVBuses() {
   for (auto topoNode : mPVBuses) {
     auto node_idx = topoNode->matrixNodeIndex();
@@ -736,10 +737,9 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
     return hasGen && anyFinite;
   };
 
-  auto frozen = [&](CPS::TopologicalNode::Ptr node) {
+  auto switchCount = [&](CPS::TopologicalNode::Ptr node) -> CPS::UInt {
     auto it = mQLimitSwitchCount.find(node);
-    return it != mQLimitSwitchCount.end() &&
-           it->second >= mMaxQLimitSwitchesPerBus;
+    return it != mQLimitSwitchCount.end() ? it->second : 0;
   };
 
   // node, pinned at Qmax?, Q limit [pu], violation beyond the limit [pu]
@@ -748,32 +748,24 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
 
   // PV -> PQ: voltage-controlling generators that hit a reactive limit.
   for (auto node : mPVBuses) {
-    if (frozen(node))
-      continue;
+    // checked even at the switch cap, so a unit never stays past its Q limit
     CPS::Real qMaxPU, qMinPU, vSetPU;
     if (!busLimits(node, qMaxPU, qMinPU, vSetPU))
       continue;
     CPS::Real qGen = generatorReactivePowerPerUnit(node);
-    if (CPS::Math::isFinite(qMaxPU) && qGen > qMaxPU)
+    // a released unit stays PV at its limit, so the batch loop can move its
+    // setpoint off the limit instead of pinning it again on rounding noise
+    CPS::Real tol = mQLimitReleasedOnce.count(node) ? mQLimitPinTolerance : 0.0;
+    if (CPS::Math::isFinite(qMaxPU) && qGen > qMaxPU + tol)
       toPQ.emplace_back(node, true, qMaxPU, qGen - qMaxPU);
-    else if (CPS::Math::isFinite(qMinPU) && qGen < qMinPU)
+    else if (CPS::Math::isFinite(qMinPU) && qGen < qMinPU - tol)
       toPQ.emplace_back(node, false, qMinPU, qMinPU - qGen);
-  }
-
-  // optionally switch only the worst violators this pass
-  if (mMaxQLimitSwitchesPerPass > 0 && toPQ.size() > mMaxQLimitSwitchesPerPass) {
-    std::sort(toPQ.begin(), toPQ.end(), [](const auto &l, const auto &r) {
-      return std::get<3>(l) > std::get<3>(r);
-    });
-    toPQ.resize(mMaxQLimitSwitchesPerPass);
   }
 
   // PQ -> PV: pinned generators whose constraint is no longer binding.
   for (auto &kv : mQLimitConvertedAtMax) {
     auto node = kv.first;
     bool atMax = kv.second;
-    if (frozen(node))
-      continue;
     CPS::Real qMaxPU, qMinPU, vSetPU;
     if (!busLimits(node, qMaxPU, qMinPU, vSetPU))
       continue;
@@ -791,10 +783,26 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
       v = sol_V(remote->second);
       vTarget = mRegulatedVSetPU[genIdx];
     }
-    if (atMax && v > vTarget)
+    if ((atMax && v > vTarget) || (!atMax && v < vTarget)) {
+      CPS::Real miss = std::abs(v - vTarget);
+      CPS::UInt count = switchCount(node);
+      // past the hard cap every release is blocked; past the soft cap only a
+      // marginal one (a tiny miss is the signature of real oscillation)
+      Bool hardBlocked = count >= mMaxQLimitSwitchesPerBusHard;
+      Bool marginalBlocked =
+          count >= mMaxQLimitSwitchesPerBus && miss < mQLimitReleaseMargin;
+      if (hardBlocked || marginalBlocked) {
+        if (mQLimitReleaseBlocked.insert(node).second)
+          SPDLOG_LOGGER_WARN(mSLog,
+                   "Q-limit: bus {} would release from {} (V {:.6f}, target "
+                   "{:.6f}, miss {:.2e} pu) but is {}; kept pinned",
+                   node->name(), atMax ? "Qmax" : "Qmin", v, vTarget, miss,
+                   hardBlocked ? "at the hard switch cap"
+                               : "at the switch cap and below the release margin");
+        continue;
+      }
       toPV.push_back(node);
-    else if (!atMax && v < vTarget)
-      toPV.push_back(node);
+    }
   }
 
   // apply every switch of this pass at once
@@ -810,10 +818,20 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
                    mPVBuses.end());
     mPQBuses.push_back(node);
     mQLimitConvertedAtMax[node] = atMax;
-    if (++mQLimitSwitchCount[node] >= mMaxQLimitSwitchesPerBus)
-      SPDLOG_LOGGER_WARN(
-          mSLog, "Q-limit: bus {} frozen at {} after {} switches", node->name(),
-          atMax ? "Qmax" : "Qmin", mQLimitSwitchCount[node]);
+    CPS::UInt count = ++mQLimitSwitchCount[node];
+    if (count >= mMaxQLimitSwitchesPerBusHard)
+      SPDLOG_LOGGER_WARN(mSLog,
+                         "Q-limit: PV bus {} -> PQ pinned at {} (violation {:.4f} "
+                         "pu); frozen there after {} switches (hard cap)",
+                         node->name(), atMax ? "Qmax" : "Qmin", std::get<3>(c),
+                         count);
+    else if (count >= mMaxQLimitSwitchesPerBus)
+      SPDLOG_LOGGER_WARN(mSLog,
+                         "Q-limit: PV bus {} -> PQ pinned at {} (violation {:.4f} "
+                         "pu); at the switch cap after {} switches, only marginal "
+                         "releases are blocked",
+                         node->name(), atMax ? "Qmax" : "Qmin", std::get<3>(c),
+                         count);
     else
       SPDLOG_LOGGER_INFO(mSLog, "Q-limit: PV bus {} -> PQ pinned at {} (violation {:.4f} pu)",
                          node->name(), atMax ? "Qmax" : "Qmin", std::get<3>(c));
@@ -844,9 +862,22 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
         "Q-limit: PQ bus {} -> PV, voltage snapped {:.6f} -> {:.6f} ({:+.2f}%)",
         node->name(), vBefore, vSnap, (vSnap - vBefore) / vBefore * 100.0);
     mQLimitConvertedAtMax.erase(node);
-    ++mQLimitSwitchCount[node];
-    SPDLOG_LOGGER_INFO(mSLog, "Q-limit: PQ bus {} -> PV (constraint relaxed)",
-                       node->name());
+    mQLimitReleasedOnce.insert(node);
+    CPS::UInt count = ++mQLimitSwitchCount[node];
+    if (count >= mMaxQLimitSwitchesPerBusHard)
+      SPDLOG_LOGGER_WARN(mSLog,
+                         "Q-limit: PQ bus {} -> PV at the hard switch cap ({} "
+                         "switches); if pinned again it stays pinned",
+                         node->name(), count);
+    else if (count >= mMaxQLimitSwitchesPerBus)
+      SPDLOG_LOGGER_WARN(mSLog,
+                         "Q-limit: PQ bus {} -> PV at the switch cap ({} "
+                         "switches); if pinned again, marginal releases are "
+                         "blocked",
+                         node->name(), count);
+    else
+      SPDLOG_LOGGER_INFO(mSLog, "Q-limit: PQ bus {} -> PV (constraint relaxed)",
+                         node->name());
   }
 
   for (auto n : mSystem.mNodes) {
@@ -862,6 +893,13 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
 void PFSolverPowerPolar::clearReactiveLimitState() {
   mQLimitConvertedAtMax.clear();
   mQLimitSwitchCount.clear();
+  mQLimitReleaseBlocked.clear();
+  mQLimitReleasedOnce.clear();
+}
+
+void PFSolverPowerPolar::resetQLimitSwitchCounts() {
+  mQLimitSwitchCount.clear(); 
+  mQLimitReleaseBlocked.clear(); 
 }
 
 void PFSolverPowerPolar::calculatePAndQInjectionPQBuses() {

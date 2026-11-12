@@ -869,6 +869,7 @@ Bool PFSolver::resolveRemoteRegulationBatch() {
   UInt solves = 0;
   // Whether the last Q-limit re-check found nothing more to switch
   Bool qLimitsSettled = true;
+  resetQLimitSwitchCounts(); 
   // the base solve converged so it is the first good operating point
   saveOperatingPoint();
 

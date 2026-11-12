@@ -162,10 +162,14 @@ protected:
   CPS::Bool mEnforceReactiveLimits = false;
   /// Maximum number of Q-limit outer iterations
   CPS::UInt mMaxOuterIterations = 10;
-  /// Maximum number of PV<->PQ switches per bus before it is frozen (anti-oscillation)
+  /// PV<->PQ switches per bus after which only marginal releases are blocked (anti-oscillation)
   CPS::UInt mMaxQLimitSwitchesPerBus = 2;
-  /// Maximum PV->PQ switches per Q-limit pass, worst violators first; 0 = no cap
-  CPS::UInt mMaxQLimitSwitchesPerPass = 0;
+  /// PV<->PQ switches per bus after which every release is blocked, whatever the miss
+  CPS::UInt mMaxQLimitSwitchesPerBusHard = 6;
+  /// Below the hard cap, a release that misses the voltage target by at least this much [pu] is allowed
+  CPS::Real mQLimitReleaseMargin = 1e-3;
+  /// A unit released once is pinned only when its Q exceeds a limit by more than this [pu]
+  CPS::Real mQLimitPinTolerance = 1e-4;
   /// Relative tolerance for non-authoritative (e.g. Load) base-voltage candidates vs. the zone's rating
   CPS::Real mBaseVoltageLooseTolerance = 0.1;
   /// Relative tolerance between authoritative base-voltage sources (generator/transformer/network-injection/VSI) within a zone
@@ -223,6 +227,8 @@ protected:
   void resetToOriginalClassification();
   /// Clear Q-limit bookkeeping; overridden by PFSolverPowerPolar
   virtual void clearReactiveLimitState() {}
+  /// Reset Q-limit switch counts; used b4 remoteRegulationBatch
+  virtual void resetQLimitSwitchCounts() {}
   /// Base voltage a single component reports for `node`, or 0 if unknown
   CPS::Real componentBaseVoltage(CPS::TopologicalPowerComp::Ptr comp,
                                  CPS::TopologicalNode::Ptr node);
@@ -306,10 +312,15 @@ public:
   void setEnforceReactiveLimits(CPS::Bool value) {
     mEnforceReactiveLimits = value;
   }
-
-  /// Cap PV->PQ switches per Q-limit pass to the worst violators; 0 = no cap
-  void setMaxQLimitSwitchesPerPass(CPS::UInt maxSwitches) {
-    mMaxQLimitSwitchesPerPass = maxSwitches;
+  /// Switches per bus after which every release is blocked
+  void setMaxQLimitSwitchesPerBusHard(CPS::UInt maxSwitches) {
+    mMaxQLimitSwitchesPerBusHard = maxSwitches;
+  }
+  /// Smallest voltage miss [pu] that still releases a unit at the switch cap
+  void setQLimitReleaseMargin(CPS::Real margin) { mQLimitReleaseMargin = margin; }
+  /// How far past a Q limit [pu] a released unit must go before it is pinned again
+  void setQLimitPinTolerance(CPS::Real tolerance) {
+    mQLimitPinTolerance = tolerance;
   }
 
   /// Raise for grids with legitimate large voltage drop (e.g. untapped feeders)

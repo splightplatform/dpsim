@@ -43,6 +43,11 @@ protected:
   CPS::Vector mBestRunD;
   CPS::Real mBestRunNorm = std::numeric_limits<CPS::Real>::infinity(); 
 
+  // Solution state of the saved operating point
+  CPS::Vector mSavedV, mSavedD, mSavedP, mSavedQ, mSavedPesp, mSavedQesp;
+  std::map<CPS::TopologicalNode::Ptr, bool> mSavedQLimitConvertedAtMax;
+  std::map<CPS::TopologicalNode::Ptr, CPS::UInt> mSavedQLimitSwitchCount;
+
   // counter & limits for iteration improvement tracking
   CPS::UInt mNumNonImprovingSteps = 0; 
   CPS::UInt mMaxNonImprovingSteps = 8; 
@@ -81,6 +86,9 @@ protected:
   void finishNewtonRun() override;
   /// Calculate mismatch
   void calculateMismatch() override;
+  /// Save / restore the operating point, solution and Q-limit state included
+  void saveOperatingPoint() override;
+  void restoreOperatingPoint() override;
 
   // Helper methods
   /// Resize solution vector

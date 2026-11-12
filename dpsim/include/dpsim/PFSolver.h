@@ -42,8 +42,43 @@ protected:
   CPS::Real mRemoteRegTolerance = 1e-5;
   CPS::UInt mMaxRemoteRegIterations = 30;
 
+  /// Generators regulating the same remote bus; the batch loop moves them together
+  struct RemoteRegGroup {
+    CPS::UInt regulatedBus;
+    std::vector<CPS::UInt> genBuses;
+    CPS::Real target; // remote target voltage [pu]
+  };
+  std::vector<RemoteRegGroup> mRemoteRegGroups;
+  /// Use the batch loop (true) or the one-regulator-at-a-time loop (false)
+  CPS::Bool mRemoteRegBatch = true;
+  /// Maximum passes of the batch loop (one warm Newton solve each)
+  CPS::UInt mMaxRemoteRegBatchPasses = 200;
+  /// Bounds for a remote regulator's terminal setpoint [pu]
+  CPS::Real mRemoteRegVSetMin = 0.9;
+  CPS::Real mRemoteRegVSetMax = 1.1;
+  /// Largest terminal setpoint move per pass [pu]
+  CPS::Real mRemoteRegMaxMove = 0.05;
+  /// Fraction of the sensitivity-corrected move applied, since neighbouring groups move too
+  CPS::Real mRemoteRegGainFactor = 0.8;
+  /// Measured sensitivities dV_regulated / dV_terminal outside this range are ignored
+  CPS::Real mRemoteRegSensitivityMin = 0.1;
+  CPS::Real mRemoteRegSensitivityMax = 1.5;
+
   /// Drive local PV setpoints so remote-regulated buses reach their target voltage
   Bool resolveRemoteRegulation();
+  /// Batch variant, move every group at once, one Newton solve per pass
+  Bool resolveRemoteRegulationBatch();
+  /// Last good operating point of the batch loop: bus classification and setpoints
+  struct OperatingPoint {
+    CPS::TopologicalNode::List pqBuses;
+    CPS::TopologicalNode::List pvBuses;
+    std::map<CPS::UInt, CPS::Real> localVSet;
+    CPS::Bool converged = false;
+  } mSavedOperatingPoint;
+  /// Save the present operating point; subclasses add their solution state
+  virtual void saveOperatingPoint();
+  /// Return to the saved operating point and rebuild the system for it
+  virtual void restoreOperatingPoint();
   /// Current solved |V| at a bus, in the solver's own representation.
   virtual CPS::Real busVoltageMagnitude(CPS::UInt busIdx) = 0;
   virtual void setBusVoltageMagnitude(CPS::UInt busIdx, CPS::Real value) = 0;
@@ -302,6 +337,27 @@ public:
   }
 
   CPS::UInt getMaxIterations() const { return mMaxIterations; }
+
+  /// Use the batch remote-regulation loop (default) or the one-at-a-time loop
+  void setRemoteRegulationBatch(CPS::Bool value) { mRemoteRegBatch = value; }
+  /// Remote-regulated bus voltage error below which a group counts as settled [pu]
+  void setRemoteRegulationTolerance(CPS::Real tolerance) {
+    mRemoteRegTolerance = tolerance;
+  }
+  /// Maximum passes of the batch remote-regulation loop
+  void setMaxRemoteRegulationPasses(CPS::UInt passes) {
+    mMaxRemoteRegBatchPasses = passes;
+  }
+  /// Bounds for a remote regulator's terminal setpoint [pu]
+  void setRemoteRegulationSetpointBounds(CPS::Real vMin, CPS::Real vMax) {
+    mRemoteRegVSetMin = vMin;
+    mRemoteRegVSetMax = vMax;
+  }
+  /// Range of measured sensitivities the batch loop accepts
+  void setRemoteRegulationSensitivityRange(CPS::Real sMin, CPS::Real sMax) {
+    mRemoteRegSensitivityMin = sMin;
+    mRemoteRegSensitivityMax = sMax;
+  }
 
   class SolveTask : public CPS::Task {
   public:

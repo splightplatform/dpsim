@@ -141,6 +141,22 @@ void PFSolverPowerPolarSparse::calculateJacobian() {
       mJsparse.coeffRef(a + npqpv, a + npqpv) = Qk - Bkk * Vk * Vk; // J4
     }
   }
+
+  // Current-balance rows
+  if (mCurrentBalanceRows) {
+    for (UInt a = 0; a < mNumPQBuses; ++a) {
+      const UInt k = mPQPVBusIndices[a];
+      const Real voltage = sol_V.coeff(k);
+      // same condition as calculateMismatch, so rows and Jacobian stay consistent
+      if (voltage <= 0.0)
+        continue;
+      for (const UInt row : {a, a + npqpv})
+        for (CPS::SparseMatrixRow::InnerIterator it(mJsparse, row); it; ++it)
+          it.valueRef() /= voltage;
+      mJsparse.coeffRef(a, a + npqpv) += mF(a);
+      mJsparse.coeffRef(a + npqpv, a + npqpv) += mF(a + npqpv);
+    }
+  }
 }
 
 void PFSolverPowerPolarSparse::solveJacobianSystem() {

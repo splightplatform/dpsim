@@ -9,6 +9,7 @@
 #pragma once
 
 #include <map>
+#include <limits>
 
 #include <dpsim/PFSolver.h>
 
@@ -37,6 +38,23 @@ protected:
   CPS::Vector mLastConvergedD;
   bool mHasLastConvergedSolution = false;
 
+  // Cache best iterate of the run for reload if non-convergence
+  CPS::Vector mBestRunV; 
+  CPS::Vector mBestRunD;
+  CPS::Real mBestRunNorm = std::numeric_limits<CPS::Real>::infinity(); 
+
+  // counter & limits for iteration improvement tracking
+  CPS::UInt mNumNonImprovingSteps = 0; 
+  CPS::UInt mMaxNonImprovingSteps = 8; 
+  CPS::Real mBlowUpFactor = 10.0; 
+
+  /// Divide each PQ bus's mismatch rows by |V| (current balance) instead of power balance
+  CPS::Bool mCurrentBalanceRows = true;
+  /// Largest angle step [rad] after whole-step scaling
+  CPS::Real mDThetaLimit = 0.2;
+  /// Largest relative voltage step dV/V after whole-step scaling
+  CPS::Real mDVLimit = 0.1;
+
   // Remote bus regulation
   CPS::Real busVoltageMagnitude(CPS::UInt busIdx) override { return sol_V(busIdx); }
   void setBusVoltageMagnitude(CPS::UInt busIdx, CPS::Real value) override { sol_V(busIdx) = value; }
@@ -57,6 +75,10 @@ protected:
   Bool updateSolution() override;
   /// Set final solution
   void setSolution() override;
+  // Set the best values at the beginning of the Newton run
+  void startNewtonRun() override;
+  // Check if Newton run converged, if not, reset state to best values
+  void finishNewtonRun() override;
   /// Calculate mismatch
   void calculateMismatch() override;
 
@@ -104,5 +126,12 @@ public:
                      CPS::Real timeStep, CPS::Logger::Level logLevel);
   ///
   virtual ~PFSolverPowerPolar(){};
+
+  /// Use current-balance rows for PQ buses (true) or plain power-balance rows (false)
+  void setCurrentBalanceRows(CPS::Bool value) { mCurrentBalanceRows = value; }
+  /// Largest angle step [rad] per Newton iteration
+  void setDThetaLimit(CPS::Real value) { mDThetaLimit = value; }
+  /// Largest relative voltage step dV/V per Newton iteration
+  void setDVLimit(CPS::Real value) { mDVLimit = value; }
 };
 } // namespace DPsim

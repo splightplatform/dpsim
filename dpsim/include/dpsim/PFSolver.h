@@ -152,6 +152,10 @@ protected:
   /// Use last converged solution as initial guess
   CPS::Bool mKeepLastSolution = false;
 
+  // NewtonRun functions to support step scaling and watchdog
+  virtual void startNewtonRun() {} 
+  virtual void finishNewtonRun() {} 
+
   /// Generate initial solution for current time step
   virtual void generateInitialSolution(Real time,
                                        bool keep_last_solution = false) = 0;
@@ -161,7 +165,7 @@ protected:
   virtual void calculateJacobian() = 0;
   /// Update solution in each iteration
   // true means a step was accepted (went correct direction)
-  // false means the previous state was restored and the run should stop (divergence)
+  // false means state left as is, finishNewtonRun will restore the best
   virtual Bool updateSolution() = 0;
   /// Set final solution
   virtual void setSolution() = 0;

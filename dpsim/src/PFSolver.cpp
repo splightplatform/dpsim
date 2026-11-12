@@ -10,6 +10,7 @@
 #include <dpsim/PFSolver.h>
 #include <dpsim/SequentialScheduler.h>
 #include <iostream>
+#include <numeric>
 
 using namespace DPsim;
 using namespace CPS;
@@ -69,10 +70,10 @@ void PFSolver::initialize() {
   }
 
   setBaseApparentPower();
-  assignMatrixNodeIndices();
-  initializeComponents();
+  assignMatrixNodeIndices(); // gives each node its own index (used in sol_V(i), etc)
+  initializeComponents(); // converts each components params to pu
 
-  // Set up datastructures for remote bus regulation.
+  // Find remote regulators
   for (auto gen : mSynchronGenerators) {
     UInt g = gen->node(0)->matrixNodeIndex();
     auto rn = gen->regulatedNode();
@@ -80,19 +81,61 @@ void PFSolver::initialize() {
                        g, rn ? std::to_string(rn->matrixNodeIndex()) : "null");
     if (rn && rn->matrixNodeIndex() != g) {
       UInt r = rn->matrixNodeIndex();
-      mRegulatedBusOfGen[g] = r;
+      mRegulatedBusOfGen[g] = r; // maps a gen node index to the bus node index it regulates
+      // maps a gen node index to remote target voltage setpoint
       mRegulatedVSetPU[g] = gen->attributeTyped<Real>("V_set_pu")->get();
+      // maps a gen node index to a terminal setpoint (starts at remote target)
       mLocalVSetOverride[g] = mRegulatedVSetPU[g];
     }
   }
 
-  // Group regulators by the bus they regulate: one error and one move per group.
+  determinePFBusType(); // classifies each bus as PQ, PV, VD
+  propagateAndVerifyBaseVoltage(); // determine each bus's base voltage zone by zone
+  composeAdmittanceMatrix(); // stamps every line, transformer, and shunt into mY
+
+  // create zero-impedance clusters
+  setRemoteRegGroups();
+
+  setUpJacobianStorage();
+  mX.setZero(mNumUnknowns);
+  mF.setZero(mNumUnknowns);
+}
+
+void PFSolver::setRemoteRegGroups(){
+  std::vector<UInt> parent(mSystem.mNodes.size()); 
+  std::iota(parent.begin(), parent.end(), 0); 
+   // recursive func to find the root bus for a cluster
+  std::function<UInt(UInt)> root = [&](UInt b) {
+    return parent[b] == b ? b : parent[b] = root(parent[b]);
+  };
+
+  if (mZeroImpedanceThreshold > 0.0){
+    for (auto line : mLines) {
+      Real vBase = mBaseVoltageAtNode[line->node(0)];
+      Real zBase = vBase * vBase / mSolverBaseApparentPower;
+      Real zPU = std::abs(Complex(**line->mSeriesRes, mSystem.mSystemOmega * **line->mSeriesInd)) / zBase; 
+
+      if (zPU > mZeroImpedanceThreshold)
+        continue; 
+      
+      UInt a = root(line->node(0)->matrixNodeIndex()); 
+      UInt b = root(line->node(1)->matrixNodeIndex()); 
+      if (a != b) {
+        parent[a] = b;
+        SPDLOG_LOGGER_INFO(mSLog, "Zero-impedance line {} (|Z| {:.2e} pu) ties its buses",
+                         line->name(), zPU);
+      }
+    }
+  }
+
+  // Group regulators by cluster root
   mRemoteRegGroups.clear();
   std::map<UInt, size_t> groupOfBus;
   for (auto &[g, r] : mRegulatedBusOfGen) {
-    auto it = groupOfBus.find(r);
+    UInt key = root(r); 
+    auto it = groupOfBus.find(key);
     if (it == groupOfBus.end()) {
-      groupOfBus[r] = mRemoteRegGroups.size();
+      groupOfBus[key] = mRemoteRegGroups.size();
       mRemoteRegGroups.push_back({r, {g}, mRegulatedVSetPU[g]});
       continue;
     }
@@ -106,14 +149,13 @@ void PFSolver::initialize() {
   }
   SPDLOG_LOGGER_INFO(mSLog, "Remote regulation: {} regulators in {} groups",
                      mRegulatedBusOfGen.size(), mRemoteRegGroups.size());
-
-  determinePFBusType();
-  propagateAndVerifyBaseVoltage();
-  composeAdmittanceMatrix();
-
-  setUpJacobianStorage();
-  mX.setZero(mNumUnknowns);
-  mF.setZero(mNumUnknowns);
+  
+  // fill tiedBuses for each reg group
+  for (UInt b = 0; b < parent.size(); ++b){
+    auto it = groupOfBus.find(root(b)); 
+    if (it != groupOfBus.end())
+      mRemoteRegGroups[it->second].tiedBuses.push_back(b); 
+  }
 }
 
 void PFSolver::setUpJacobianStorage() {
@@ -885,7 +927,8 @@ Bool PFSolver::resolveRemoteRegulationBatch() {
       st.units.clear();
 
       // a local regulator (or the slack) already holds the bus
-      if (isPV(group.regulatedBus) || isVD(group.regulatedBus)) {
+      if (std::any_of(group.tiedBuses.begin(), group.tiedBuses.end(),
+                      [&](UInt b) { return isPV(b) || isVD(b); } )) {
         ++nHeld;
         continue;
       }
@@ -1018,7 +1061,7 @@ Bool PFSolver::resolveRemoteRegulationBatch() {
     }
     saveOperatingPoint();
 
-    // 4. The moves change reactive output: re-check limits and re-solve if anything switched
+    // 4. The moves change reactive output so re-check limits and re-solve
     if (mEnforceReactiveLimits) {
       qLimitsSettled = false;
       for (UInt q = 0; q < mMaxOuterIterations; ++q) {

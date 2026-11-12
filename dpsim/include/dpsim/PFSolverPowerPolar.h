@@ -64,12 +64,14 @@ protected:
   // Remote bus regulation
   CPS::Real busVoltageMagnitude(CPS::UInt busIdx) override { return sol_V(busIdx); }
   void setBusVoltageMagnitude(CPS::UInt busIdx, CPS::Real value) override { sol_V(busIdx) = value; }
-  CPS::Bool isQLimitPinned(CPS::UInt busIdx) override {
+  std::vector<CPS::TopologicalNode::Ptr> mNodeOfIndex; // lazy build map for bus index to a node
+  void createNodeIndexMap() {
+    mNodeOfIndex.resize(mSystem.mNodes.size()); 
     for (auto &node : mSystem.mNodes)
-      if (node->matrixNodeIndex() == busIdx)
-        return mQLimitConvertedAtMax.count(node) > 0;
-    return false;
+      mNodeOfIndex[node->matrixNodeIndex()] = node; 
   }
+  CPS::Bool isQLimitPinned(CPS::UInt busIdx) override; 
+  CPS::Real busGeneratorReactivePower(CPS::UInt busIdx) override; 
 
   // Core methods
   /// Generate initial solution for current time step

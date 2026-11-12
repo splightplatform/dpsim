@@ -25,6 +25,11 @@ protected:
   /// Factorize (first iteration of a run) or refactorize, then solve
   void solveJacobianSystem() override;
 
+  /// Exact remote-regulation sensitivities from a fresh factorisation of the Jacobian
+  CPS::Bool remoteRegulationSensitivities(
+      const std::vector<CPS::UInt> &inputs, const std::vector<CPS::UInt> &vOut,
+      const std::vector<CPS::UInt> &qOut, CPS::Matrix &dV, CPS::Matrix &dQ) override; 
+
   /// Construct the structural sparsity pattern of the Jacobian from the bus admittance matrix
   void buildJacobianPattern();
 

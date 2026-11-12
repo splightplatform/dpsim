@@ -711,6 +711,24 @@ CPS::Real PFSolverPowerPolar::generatorReactivePowerPerUnit(
   CPS::Complex S = sol_Vcx(k) * conj(I);
   return S.imag() + loadReactivePowerPerUnit(node);
 }
+CPS::Bool PFSolverPowerPolar::isQLimitPinned(CPS::UInt busIdx) {
+    if (mNodeOfIndex.empty())
+      createNodeIndexMap(); 
+    auto node = busIdx < mNodeOfIndex.size() ? mNodeOfIndex[busIdx] : nullptr; 
+    if (node)
+      return mQLimitConvertedAtMax.count(node) > 0; 
+    else 
+      return false; 
+}
+CPS::Real PFSolverPowerPolar::busGeneratorReactivePower(CPS::UInt busIdx) {
+  if (mNodeOfIndex.empty())
+    createNodeIndexMap(); 
+  auto node = busIdx < mNodeOfIndex.size() ? mNodeOfIndex[busIdx] : nullptr; 
+  if (node) 
+    return generatorReactivePowerPerUnit(node); 
+  else
+    return 0.0; 
+}
 
 CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
   // Returns false if the bus has no generator or no finite Q limit.
@@ -762,6 +780,33 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
       toPQ.emplace_back(node, false, qMinPU, qMinPU - qGen);
   }
 
+  // The Q a pinned remote regulator would carry at its RMPCT share of its
+  // group's total; false if a unit in the group has no share or none is free
+  if (mNodeOfIndex.empty())
+    createNodeIndexMap();
+  auto rmpctShareQ = [&](UInt genIdx, CPS::Real &qShare) -> bool {
+    for (auto &group : mRemoteRegGroups) {
+      if (std::find(group.genBuses.begin(), group.genBuses.end(), genIdx) ==
+          group.genBuses.end())
+        continue;
+      CPS::Real shareSum = 0.0, qSum = 0.0;
+      bool anyFree = false;
+      for (UInt idx : group.genBuses) {
+        auto it = mRemoteRegShareOfNode.find(mNodeOfIndex[idx]);
+        if (it == mRemoteRegShareOfNode.end() || it->second <= 0.0)
+          return false;
+        shareSum += it->second;
+        qSum += generatorReactivePowerPerUnit(it->first);
+        anyFree = anyFree || !mQLimitConvertedAtMax.count(it->first);
+      }
+      if (!anyFree)
+        return false;
+      qShare = mRemoteRegShareOfNode.at(mNodeOfIndex[genIdx]) / shareSum * qSum;
+      return true;
+    }
+    return false;
+  };
+
   // PQ -> PV: pinned generators whose constraint is no longer binding.
   for (auto &kv : mQLimitConvertedAtMax) {
     auto node = kv.first;
@@ -783,8 +828,16 @@ CPS::Bool PFSolverPowerPolar::enforceReactiveLimits() {
       v = sol_V(remote->second);
       vTarget = mRegulatedVSetPU[genIdx];
     }
-    if ((atMax && v > vTarget) || (!atMax && v < vTarget)) {
-      CPS::Real miss = std::abs(v - vTarget);
+    CPS::Real qShare = 0.0;
+    bool byShare = rmpctShareQ(genIdx, qShare);
+    bool release =
+        byShare ? (atMax ? qShare < qMaxPU - mQLimitPinTolerance
+                         : qShare > qMinPU + mQLimitPinTolerance)
+                : ((atMax && v > vTarget) || (!atMax && v < vTarget));
+    if (release) {
+      // a share-based release is not a marginal voltage miss
+      CPS::Real miss = byShare ? std::numeric_limits<CPS::Real>::infinity()
+                               : std::abs(v - vTarget);
       CPS::UInt count = switchCount(node);
       // past the hard cap every release is blocked; past the soft cap only a
       // marginal one (a tiny miss is the signature of real oscillation)
